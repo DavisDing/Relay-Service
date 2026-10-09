@@ -5,17 +5,17 @@
 
 ## 1. 项目概况
 
-- 工作目录：`/Users/dinghao/Downloads/Relay-Service`；正式产品名称和源码/发布边界尚未确认，见 REQUIREMENT D-11。
-- 当前形态：需求与设计准备仓库。Git 跟踪 `.gitignore`、`AGENTS.md`、`docs/AI_CONTEXT.md`、`docs/REQUIREMENT.md`、`docs/DESIGN.md`，目前没有业务源码、运行服务或测试工程。
-- 产品目标（非已实现事实）：NAS/Linux Docker 服务端、NAS Web 管理端与 macOS 27 客户端。确认状态和详细范围由 REQUIREMENT 管理，不在此重复维护整份需求。
-- 旧 Mac `DavisDing/Relay` 是独立工程；本仓库不包含其 Swift 源码或构建配置。本仓库文档不得覆盖旧工程同名文件。
+- 工作目录：`/Users/dinghao/Downloads/Relay-Service`；本项目同时承载 NAS 服务端/Web 与 macOS 27 客户端，见 REQUIREMENT D-11；正式品牌名仍可后续调整。
+- 当前形态：需求与设计准备仓库。原 Git 跟踪 `.gitignore`、`AGENTS.md`、`docs/AI_CONTEXT.md`、`docs/REQUIREMENT.md`、`docs/DESIGN.md`，新增 `docs/DEPLOYMENT.md` 为配置步骤文档，不是业务实现；目前没有业务源码、运行服务或测试工程。
+- 产品目标（非已实现事实）：UGOS PRO 的 Docker 服务端、NAS Web 管理端及 M 系列/Apple Silicon macOS 27 站外分发客户端；用户自配反代，项目交付 Web/API 端口。确认状态和详细范围由 REQUIREMENT 管理，不在此重复维护整份需求。
+- 本项目目标包含 NAS 服务端/Web 与 Mac 客户端，但当前仓库仍只有文档，没有 Mac Swift 源码或构建配置。`DavisDing/Relay` 仅作为原生 UI/适配器参考，不是首期旧数据迁移来源；本项目后续 Mac 代码应按 D-11 的同仓边界纳入。
 
 ## 2. 技术与环境
 
 - 已采用的业务技术栈/数据库：尚无，不得把设计候选写成已采用。
 - 当前依赖与工具链：没有业务依赖清单、版本锁定文件、安装脚本或构建配置。Git、文件读取和文档检查可在当前工作区使用，不代表未来运行时选型。
 - 环境配置：本仓库没有 `.env`、Compose、数据库配置或实际部署目录；文档记录的 NAS 参数、模型映射和 URL 变量为历史输入摘要，未在本仓库存档为可复现附件。
-- NAS 版本、LiteLLM 摘要/API/权限、供应商认证、Lucky 和 Mac 发布资源仍待核实，登记在 REQUIREMENT 13.4；文档存在地址不代表已连接或可调用。
+- 用户已补充 UGOS PRO 公开最新版本、Docker 部署、LiteLLM 最新版本/默认启动和权限/DB 未启用、M 系列 Mac/非 App Store 分发；此前 Compose/模型映射已经提供，Lucky 由用户自行配置。作为用户报告记录，不虚构版本号或在线验证结果；不再索要 NAS 工作目录/备份目标/Lucky 配置，见 REQUIREMENT 2.3/2.4。
 - 不存储真实密码、Key、管理令牌、账户个人信息或真实 NAS 数据。需要证据时使用脱敏配置、固定版本与验证记录。
 
 ## 3. 代码与文档导航
@@ -24,8 +24,9 @@
 |---|---|
 | `AGENTS.md` | 协作入口、文档读取顺序、保护已有修改和阶段边界 |
 | `docs/REQUIREMENT.md` | 已确认需求、提案、首期范围、FR/AC、D/T/E/O 决策登记 |
-| `docs/DESIGN.md` | 设计准备稿；记录约束与设计责任，不假装存在已落地架构 |
+| `docs/DESIGN.md` | 新项目同仓架构/升级兼容方案；记录约束与设计责任，不假装存在已落地架构 |
 | `docs/AI_CONTEXT.md` | 当前仓库事实、长期边界、已核实检查入口 |
+| `docs/DEPLOYMENT.md` | 已创建的 LiteLLM 数据库配置指引/示例；尚未部署/实测 |
 | `.gitignore` | 当前忽略 `.DS_Store` |
 
 没有 API、页面、适配器、调度器、持久化模块或 Mac 入口可引用。新增实现后依据实际代码更新导航，不提前虚构 Controller/Service/DAO 等层次。
@@ -48,7 +49,7 @@
 - 按会话明确的阶段与范围工作；文档审查本身不授权自行进入业务实现、NAS 联调或旧工程改造。
 - 需求、建议、设计与实现现状必须区分。REQUIREMENT 中 CONFIRMED 不表示已实现；新增提案无明确用户答复不能自动成为 CONFIRMED。
 - 需求决策、技术设计、环境事实、操作授权分别登记 D/T/E/O。环境暂不支持时不能擅自减掉已确认首期功能，兼容性降级不自动等于验收通过。
-- NAS 部署/迁移、线上路由修改、真实付费调用、旧本地/云数据清理、新增依赖与发布分别明确范围和授权；默认探针预算不是开发期付费测试授权。
+- NAS 首次部署/版本升级、线上路由修改、真实付费调用、旧本地/云数据清理、新增依赖与发布分别明确范围和授权；默认探针预算不是开发期付费测试授权。
 - 本项目未有已确认 Web 页面、视觉稿或 UI 文件，不得假装保护清单已完成。Mac 已有 UI 的保护范围按旧工程自己的文档核实；本仓库的概述不是修改旧 UI 的授权。
 - 用户已有未提交改动应保留，只做本次范围内补充，不回退或覆盖与本任务无关内容。
 
