@@ -1,6 +1,6 @@
 # Relay 部署平台 · 技术架构规划与设计
 
-- 更新日期：2026-10-09（历史资料核对日期仍为 2026-10-08）。
+- 更新日期：2026-10-12（PostgreSQL 镜像策略按用户选择改为 latest；保留此前日志及架构规划）。
 - 状态：当前推荐技术架构 / PROPOSED 实施；职责、部署与核心数据流已规划，精确合同/版本锁定及集成验证未完成，非已实施架构。
 - 对应需求：REQUIREMENT v0.9-draft。FR 定义目标，AC 为验收草案；D/T/E/O 状态以 REQUIREMENT 第 13 节为唯一入口。
 - 本轮范围：规划 UGOS PRO Docker 的 NAS 服务端/Web 与 M 系列 Mac 同仓架构，补齐运行拓扑、模块入口、数据流/事务、鉴权、客户端同步、构建发布与验证闸门（2.3、10.9）。沿用新项目/未来升级兼容、低余额/脱敏诊断及 LiteLLM DB 指引；不改需求，不实施业务代码，不安装依赖或部署。
@@ -27,6 +27,7 @@ REQUIREMENT 保存用户 NAS/配置输入的历史摘要，以及对独立 Mac �
 | 目标 | 当前输入/风险 | 处理方式 |
 |---|---|---|
 | 原生虚拟 Key、日志与管理 | 历史输入称现有 LiteLLM 无数据库，文件配置只读；接口/许可未实测 | E-02 形成矩阵后提出数据库/日志/模型迁移方案；未实施兼容性降级不算完整验收，D-02 已接受数据库配置路线；步骤见 DEPLOYMENT |
+| 第一阶段请求用量日志 | 当前 LiteLLM 无 DB；用量记录、对话正文、数据库模型是不同开关 | DEPLOYMENT 0 给出 PostgreSQL 安装/环境注入/`disable_spend_logs: false`/`disable_spend_updates: false`/正文关闭及无推理验证顺序；尚未执行 NAS 操作，不标 WP-0 已完成 |
 | 请求/回答正文查看 | 统计接口是否包含正文、日志接入方式未知 | D-04 先限定内容/范围；T-03 验证接入，不默认所有请求改道 Relay |
 | 自动安装更新 | 历史记录中的旧更新能力是检查/下载，不是完整安装流程 | E-06 核实身份/签名资源，D-09 已确认自动检查/下载及用户选安装窗口；T-07 出安全设计 |
 | 多实例/多设备与 Top 5 | 使用者权限/已读共享、稳定别名、逻辑请求证据仍未完整定义 | D-01 已确认单管理员/多只读设备和每设备已读；T-03/T-06 冻结数据口径；不把不同名称猜成同模型或用缺失请求编造排名 |
@@ -305,7 +306,7 @@ Web / Mac ──用户配置的HTTPS反代或局域网入口──> Relay API �
 | 服务运行时 | Python 3.14 系列 | 网络采集与评测逻辑采用同一语言，便于维护 Python 日志扩展；这是 Relay 独立运行时，LiteLLM 镜像内部版本不改动。官方列为维护中的版本，实际依赖兼容待验证 |
 | API | FastAPI + Uvicorn + Pydantic 2 系列 | 声明请求/响应、验证与 OpenAPI 合同；同一套 API 服务 Web/Mac。FastAPI/Uvicorn 具体版本在兼容验证后锁定 |
 | 外部 HTTP | HTTPX AsyncClient | 实例级超时/连接池、流式解析、错误归因；直接访问网关 HTTP API，Relay 不因连接 LiteLLM 就嵌入整套 LiteLLM SDK |
-| 持久化 | PostgreSQL 17 系列 | 一个数据库服务内分别建立 `relay`、`litellm` 两个数据库；事务保障采集游标、预算预留和迁移提交。该系列仍受官方支持；目标 LiteLLM 镜像兼容验证是选型前提 |
+| 持久化 | PostgreSQL，镜像 `postgres:latest`（2026-10-12 用户选择） | 一个数据库服务内分别建立 `relay`、`litellm` 两个数据库；事务保障采集游标、预算预留和迁移提交。记录实际主版本/digest、验证 LiteLLM 兼容；latest 不代表自动主版本数据升级，更新流程见 DEPLOYMENT 1.2 |
 | 数据访问/迁移 | SQLAlchemy 2 系列 + psycopg 3 系列 + Alembic 1 系列 | 数据访问、异步驱动、版本化 schema 迁移各用一个实现；SQLAlchemy 首先按 2.0 文档兼容面验证，不宣称它是最新系列，切换系列需回归；金额/关联/约束用关系表，来源扩展字段按需 JSONB。每个并发任务独立数据库会话 |
 | 安全基础库 | argon2-cffi + cryptography（具体版本待锁定） | 管理员密码用 Argon2id 验证；需要服务端调用的网关/供应商秘密用认证加密，不自制算法。两库的用途、许可证及 NAS 镜像安装纳入 WP-0/1；配置与恢复边界见 10.9.5 |
 | 管理 Web | React 19 系列 + TypeScript + Vite | 表格/筛选/详情/状态交互；编译成静态文件随 Relay 镜像发布，Node 只用于构建。路由和服务端数据缓存采用 React Router/TanStack Query，版本按 React 兼容组合锁定 |
@@ -313,7 +314,7 @@ Web / Mac ──用户配置的HTTPS反代或局域网入口──> Relay API �
 | 计划和执行 | asyncio + PostgreSQL 任务/租约/预算记录 | 原生周期足够当前分钟/天级计划；任务可靠性由数据库状态承担。无需首期增加 Redis/Celery，不把内存定时器或 FastAPI BackgroundTasks 当持久队列 |
 | 部署 | UGOS PRO Docker Compose + 既有 LiteLLM；反代用户自配 | 构建静态 Web 和 Python 运行镜像；通常新增 `relay` 与 `postgres` 两个常驻容器，若已有可用 PostgreSQL 则只新增 Relay。NAS 首验 Linux amd64，其他架构另验证 |
 
-这里的大版本是建议兼容基线，未声明已安装、已实测或为最新版本。实施前产出精确锁文件、镜像摘要、许可证和目标架构安装结果；TypeScript/Vite、路由/缓存库等具体版本届时一起固定，避免凭文档填写未经组合验证的补丁号。当前没有批准部署、付费调用或数据迁移。
+PostgreSQL 的镜像标签按用户选择使用 latest，不再要求固定到 17/补丁号；数据库主版本升级独立安排，实际 digest 留作验证/恢复证据而非默认绑定到 Compose。其他运行时/依赖的大版本仍是建议兼容基线，未声明已安装、已实测或为最新版本。实施前产出精确锁文件、镜像摘要、许可证和目标架构安装结果；TypeScript/Vite、路由/缓存库等具体版本届时一起固定，避免凭文档填写未经组合验证的补丁号。当前没有批准部署、付费调用或数据迁移。
 
 依据：[FastAPI 异步说明](https://fastapi.tiangolo.com/async/)、[Python 版本状态](https://devguide.python.org/versions/)、[PostgreSQL 支持周期](https://www.postgresql.org/support/versioning/)、[SQLAlchemy 异步会话](https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html)、[psycopg 异步支持](https://www.psycopg.org/psycopg3/docs/advanced/async.html)、[Alembic](https://alembic.sqlalchemy.org/en/latest/)、[HTTPX](https://www.python-httpx.org/async/)、[Pydantic](https://docs.pydantic.dev/latest/)、[React 的 Vite/路由/数据获取选项](https://react.dev/learn/build-a-react-app-from-scratch)。Web 是登录后的管理工具，当前没有 SEO/服务端渲染要求，因此选择静态 SPA；页面路由、数据缓存及错误状态仍需要实现。
 
@@ -581,6 +582,13 @@ FR-A03/AC-55 由 `collector/alerts` 和 Web 账户详情实现，FR-O04/AC-56 �
 需求验收已同步为 v0.9-draft：AC-26/51 由旧数据导入改为本项目升级兼容；AC-55/56 已随低余额/诊断选入首期，其他编号不重排；FR→AC 总索引见 REQUIREMENT 12.3。具体执行依赖对应 D 项确认及 O 项授权，不能把新增草案直接当已批准验收。
 
 下一阶段入口：按 10.9 的工程蓝图完成 WP-0 的实际支持矩阵，验证 10.6 的推荐选型并锁定具体版本；确认 D-03/D-04 的接入/正文边界，将已确认 D-01/02/05～11 落实为合同和验证方案，再把 3.3 的操作语义、4.4 的逻辑字典和 5.1 的功能说明冻结为具体 API/schema/页面合同。环境事实未齐不会阻止离线设计，但涉及未决产品语义的分支仍标 NEEDS_CONFIRMATION。
+
+### 12.1 第一阶段管理员操作入口（2026-10-12 补充；尚未执行）
+
+- 具体顺序见 DEPLOYMENT 0.2.1：追加 PostgreSQL → 首次启动 → 独立业务角色/库 → 密码/建表权限核对 → 环境实际注入 → 日志配置 → 只重建 LiteLLM → 无推理就绪检查 → 正常请求日志核对。本阶段不创建 Relay 库、不切换模型管理来源或客户端 Key。
+- 按用户选择保留 latest；首次数据库接入与 LiteLLM 镜像更新分开。PostgreSQL 当前 18+ 的命名卷挂载为 `/var/lib/postgresql`，未来主版本仍须迁移，不仅改变镜像。
+- 正文保护同时核对 YAML 与 `STORE_PROMPTS_IN_SPEND_LOGS` 环境：任意来源开启均可能保存正文；显式环境 False 与 YAML false 配套。消息回调关闭不等于全部日志/metadata 已脱敏。
+- 这是部署文档细化，不代表 NAS、SQL、Prisma/schema、Web 日志、费用或恢复已验收，不进入本项目业务实现。
 
 ## 13. 历史资料依据与本次验证边界
 
