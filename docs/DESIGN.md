@@ -585,6 +585,8 @@ FR-A03/AC-55 由 `collector/alerts` 和 Web 账户详情实现，FR-O04/AC-56 �
 
 ### 12.1 第一阶段管理员操作入口（2026-10-12 补充；尚未执行）
 
+- 当前用户配置的单一执行入口为 `docs/NAS_SETUP.md`（2026-10-13）：具体 Compose 合并/替换片段、共享 `.env`、NAS 原配置路径、交互建库、先数据库后网关、无推理验证及首次撤回。DEPLOYMENT 保留通用设计与后续迁库/恢复说明；手册完成不代表实机验收。
+- 2026-10-13 根据用户当前 Compose 细化到 DEPLOYMENT 0.2.2：沿用 LiteLLM/Hermes 共享 `.env`，加入 PostgreSQL 服务/Secret/命名卷、LiteLLM 数据库健康依赖及正文关闭项；专用环境文件仅为可选权限收敛建议，不作为硬性部署要求。后续各应用仍使用独立数据库和角色，不因环境文件共享而共享 LiteLLM 私有表。
 - 具体顺序见 DEPLOYMENT 0.2.1：追加 PostgreSQL → 首次启动 → 独立业务角色/库 → 密码/建表权限核对 → 环境实际注入 → 日志配置 → 只重建 LiteLLM → 无推理就绪检查 → 正常请求日志核对。本阶段不创建 Relay 库、不切换模型管理来源或客户端 Key。
 - 按用户选择保留 latest；首次数据库接入与 LiteLLM 镜像更新分开。PostgreSQL 当前 18+ 的命名卷挂载为 `/var/lib/postgresql`，未来主版本仍须迁移，不仅改变镜像。
 - 正文保护同时核对 YAML 与 `STORE_PROMPTS_IN_SPEND_LOGS` 环境：任意来源开启均可能保存正文；显式环境 False 与 YAML false 配套。消息回调关闭不等于全部日志/metadata 已脱敏。

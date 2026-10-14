@@ -1,6 +1,8 @@
 # Relay · LiteLLM 数据库接入与升级操作指引
 
-- 更新日期：2026-10-12（按用户选择采用 PostgreSQL latest；补齐首次安装、建库、环境注入、正文保护与无推理验证步骤）。
+> 首次按当前 Compose 操作请使用 [2026-10-13 最新操作手册](NAS_SETUP.md)。本文保留设计依据、通用配置和后续模型管理/恢复说明；新手册沿用共享 `.env`，按一个顺序执行。
+
+- 更新日期：2026-10-13（根据用户贴出的 Compose 补充最小修改位置；沿用共享 `.env`）。
 - 状态：文档方案 / PROPOSED 实施；D-02 已确认可以给 LiteLLM 配置数据库并要求说明步骤。没有在 NAS 执行任何命令。
 - 范围：既有 LiteLLM 增加 PostgreSQL，不重建 Open WebUI/Ollama/Hermes/workbuddy2api，不自动修改客户端调用 Key 或开启付费探针。
 - 输入：用户已经提供的 Docker Compose，NAS 为 UGOS PRO/Docker，LiteLLM 默认最新版本且当前无数据库。示例服务名/环境引用沿用实际 Compose；不要求用户提供工作目录、备份位置或 Lucky 配置后才能继续设计。真正部署仍需明确操作范围/授权。
@@ -112,6 +114,57 @@ docker compose logs --tail=100 litellm
 7. 按 0.3 验证：先检查无推理健康端点和 `db` 状态，随后用一次用户原本会进行的正常请求确认 Spend Log。不要点击 Run All Checks 或调用 `/health` 来验证数据库。先不创建新的调用 Key、不迁模型、不重建其他容器。
 
 **中断处理**：如果连接失败影响现有请求，先用维护前保存的配置恢复 LiteLLM 新增环境/配置并只重建 LiteLLM，保留原镜像、Master Key 和 PostgreSQL 卷；这是本次新增空库接入的撤回步骤，不是后续有数据的数据库升级回滚流程。禁止 `docker compose down -v`，禁止靠删卷重装掩盖错误。
+
+### 0.2.2 对应用户当前 Compose 的具体修改（2026-10-13）
+
+用户当前配置：LiteLLM 使用 `ghcr.io/berriai/litellm:main-latest`；LiteLLM 和 Hermes 都通过 `env_file: [.env]` 读取同一个文件，Open WebUI 只接收其 `environment` 显式列出的变量。保留这一组织方式，不要求另建 `litellm-db.env`。Docker 支持多个服务共用环境文件；建议拆分凭据属于可选的最小权限改进，不是数据库接入的技术前提。共享连接串不表示其他应用会自动使用数据库，程序仍须明确实现数据库接入。
+
+**Compose 修改 1：在已有 `services` 内加入 PostgreSQL。** 直接使用第 2 节的 `postgres` 服务，网络继续使用原有 `ai-network`；保持 `postgres:latest` 和数据卷挂载 `/var/lib/postgresql`。
+
+**Compose 修改 2：在文件末尾加入顶层 Secret 和命名卷。** 若已有同名顶层块，只合并内容：
+
+```yaml
+secrets:
+  postgres_init_password:
+    file: ./secrets/postgres-init.txt
+
+volumes:
+  relay_postgres_data: {}
+```
+
+**Compose 修改 3：在原 `litellm` 服务内添加启动依赖。** 与 `image`、`ports`、`env_file` 同级：
+
+```yaml
+    depends_on:
+      postgres:
+        condition: service_healthy
+```
+
+该依赖使 Compose 启动 LiteLLM 前等待数据库健康；它不能代替创建业务账号和数据库，也不负责持续自动重启依赖者。首次仍先启动 PostgreSQL并按第 3 节建库，再重建 LiteLLM。
+
+**Compose 修改 4：原 `litellm.environment` 列表追加正文关闭项。** 原 `LITELLM_MASTER_KEY`、`LITELLM_DROP_PARAMS`、时区、可选代理设置全部保留：
+
+```yaml
+      - STORE_PROMPTS_IN_SPEND_LOGS=False
+```
+
+`DATABASE_URL` 和 `LITELLM_SALT_KEY` 通过原有 `env_file` 注入，无需再追加 `${DATABASE_URL}` 或另建同名服务。镜像保持用户当前 `main-latest`，不为了接数据库改成另一个移动标签。
+
+**共享 `.env` 追加：**
+
+```dotenv
+DATABASE_URL=postgresql://litellm_app:<URL编码后的业务密码>@postgres:5432/litellm
+LITELLM_SALT_KEY=sk-<独立随机值，固定保存>
+STORE_PROMPTS_IN_SPEND_LOGS=False
+```
+
+Hermes 在下次容器重建时也会收到这些变量，修改文件不会即时更新已运行容器。是否被其他程序使用取决于其自身实现，不能把共享环境文件当作跨应用数据库合同；后续 Relay 使用自己的 `relay` 库和账号，不复用 LiteLLM 私有库。当前不用给其他服务新增 `env_file`，也不用为接数据库重建 Hermes/Open WebUI。
+
+**配置文件修改：** 在 NAS 的 `/volume4/docker/ai-platform/litellm/config.yaml` 合并 0.2 的日志配置，不删除原模型、锚点或其他设置。创建 Secret 文件后按 0.2.1 的顺序启动数据库、交互建库、重建 LiteLLM、检查 readiness 与新日志。
+
+`version: '3.8'` 在现代 Compose 中已属于旧声明；可移除以消除提示，但与本次数据库接入无关，不需要借此重写现有网络/服务。
+
+本节依据用户 2026-10-13 粘贴的配置及 [Docker 环境文件](https://docs.docker.com/compose/how-tos/environment-variables/set-environment-variables/)、[启动顺序](https://docs.docker.com/compose/how-tos/startup-order/)与第 8 节官方配置资料；尚未在 NAS 执行。
 
 ### 0.3 怎么判断这一步完成
 
