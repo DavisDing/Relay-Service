@@ -10,7 +10,8 @@
 | [REQUIREMENT.md](REQUIREMENT.md) | 做什么：范围、36 个 FR、60 个 AC（3 个历史场景当前不适用）、D/T/E/O 登记 | v1.4-draft；D-03/D-04 待确认，验收为草案 |
 | [DESIGN.md](DESIGN.md) | 怎么做：架构、合同/数据、权限、客户端、工作包 | v1.4-draft；Go 语言已确认，其他技术细则 PROPOSED，依赖/接口和环境尚待验证 |
 | [NAS_SETUP.md](NAS_SETUP.md) | 当前 NAS 首次接数据库/用量日志的操作手册 | 保留 2026-10-13 基线；未在 NAS 执行，正文关闭 |
-| [nas/DEPLOY.md](nas/DEPLOY.md) | 本轮 Relay 自有服务的源码构建/Compose/角色迁移入口 | 开发预览，数据库/Docker/UGOS 未执行 |
+| [nas/DEPLOY.md](nas/DEPLOY.md) | Relay 镜像部署、源码构建与角色迁移入口 | 开发预览，数据库/Docker/UGOS 未执行 |
+| [nas/RELEASE.md](nas/RELEASE.md) | CI、GHCR Packages、Release 资产与镜像摘要 | 自动化已配置；特定提交 CI 通过，版本发布未执行 |
 | [COMPATIBILITY.md](COMPATIBILITY.md) | 六服务固定检查端点、证据与能力限制 | fixture 已测；安装版本与 AC-60 未验收 |
 | [nas/VALIDATION.md](nas/VALIDATION.md) | 本轮代码交付、依赖、实际验证和缺口 | 不等于完整首期验收 |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | 数据库接入原理、通用方案、后续模型迁库/升级恢复 | 保留 2026-10-13 基线；不是本项目完整部署资产或实测结果 |

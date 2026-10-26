@@ -168,14 +168,27 @@ jobs:
             diff -qr dist/existing dist/release
           fi
       - name: Upload all assets to a draft release, then publish
+        env:
+          EXISTING_IMAGE: ${{ steps.existing.outputs.image }}
         run: |
           set -euo pipefail
-          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+          if [ -z "$EXISTING_IMAGE" ]; then
             gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
               --verify-tag --target "$RELEASE_COMMIT" --title "$RELEASE_TAG" \
               --generate-notes --draft
+            gh release upload "$RELEASE_TAG" dist/release/* --repo "$GITHUB_REPOSITORY"
           fi
-          gh release upload "$RELEASE_TAG" dist/release/* --repo "$GITHUB_REPOSITORY" --clobber
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --json isDraft,targetCommitish,tagName > dist/release-state.json
+          python3 - <<'PY'
+          import json
+          import os
+          with open('dist/release-state.json', encoding='utf-8') as source:
+              release = json.load(source)
+          if not release['isDraft'] or release['targetCommitish'] != os.environ['RELEASE_COMMIT'] or release['tagName'] != os.environ['RELEASE_TAG']:
+              raise SystemExit('Release changed before publication; inspect it before retrying')
+          PY
+          python3 .github/scripts/check_release_tag.py
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
             --prerelease="$RELEASE_PRERELEASE" --draft=false
       - name: Record published artifacts and acceptance limits
