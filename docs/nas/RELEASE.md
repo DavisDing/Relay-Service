@@ -1,6 +1,6 @@
 # NAS CI、Packages 与 Release
 
-本仓库已提供自动化代码；本地配置和离线检查不等于远端工作流成功，也不代表已发布。2026-10-26 核对远端时尚无 Release 或 Actions 运行记录；首次发布前需提交当前源码与工作流，并获得发布范围授权。当前应用为 M1 基础监控开发预览，数据库/NAS/六服务/客户端的验收边界见 [VALIDATION.md](VALIDATION.md)。
+2026-10-26，已发布 [v0.1.0-alpha.1](https://github.com/DavisDing/Relay-Service/releases/tag/v0.1.0-alpha.1) 预发布版，对应提交 `b73f186eeabfb432cf545fab6c679486c8f2fe27`。该提交的 CI 及 [发布流程 #40326802919](https://github.com/DavisDing/Relay-Service/actions/runs/40326802919) 通过。五项公开资产、SHA-256、包内模板/Compose 与源码身份已独立下载核对；GHCR manifest 支持匿名访问并包含 amd64/arm64。当前应用为 M1 基础监控开发预览，数据库/NAS/六服务/客户端尚未完成验收；详见 [VALIDATION.md](VALIDATION.md)。
 
 ## 1. 触发和检查
 
@@ -16,7 +16,7 @@ Release 复用同一验证流程，通过后才授权发布 job 写入 Packages/
 
 发布 job 先拒绝覆盖已公开的同名 Release，确认标签提交，构建并推送 `ghcr.io/davisding/relay-service:vX.Y.Z`，包含 linux/amd64 与 linux/arm64。推送后按返回的 digest 拉取 amd64 再检查，随后使用同一 digest 打包部署资产；arm64 只完成构建，未运行验收。
 
-不维护 `latest` 标签；部署和升级使用版本对应的 digest。含 `-alpha.1`/`-rc.1` 的标签标为 GitHub prerelease。初次开发预览可选择 `v0.1.0-alpha.1`，这只是版本建议，尚未创建该标签。
+不维护 `latest` 标签；部署和升级使用版本对应的 digest。含 `-alpha.1`/`-rc.1` 的标签标为 GitHub prerelease。首个开发预览已采用 `v0.1.0-alpha.1`，不标记为稳定正式版。
 
 所有资产先上传到 draft，上传和摘要校验成功后才公开 Release。相同标签已有公开 Release 会拒绝覆盖；draft 只允许相同源码提交重试。镜像发布与 Release API 不能组成事务，后续失败可能留下已推送镜像或 draft；应检查失败 job 和标签身份后重试，不把残留 Packages 当完整发布。
 
@@ -34,11 +34,11 @@ Release 复用同一验证流程，通过后才授权发布 job 写入 Packages/
 
 发布前确认仓库与公开内容、版本、渠道和依赖许可；需求中的 O-05 不包含在单纯文档维护授权内。先将当前实现和工作流提交到默认分支，确认该提交的 CI 通过，再给同一提交创建版本标签并推送。标签创建/推送会触发发布，不能用它做无意的流水线试运行。
 
-以下仅为经授权后的示例，不表示已执行：
+以下仅为后续版本操作格式；v0.1.0-alpha.1 已创建，不应重复创建或移动：
 
 ```sh
-git tag v0.1.0-alpha.1 <已通过CI的完整提交SHA>
-git push origin refs/tags/v0.1.0-alpha.1
+git tag vX.Y.Z-rc.1 <已通过CI的完整提交SHA>
+git push origin refs/tags/vX.Y.Z-rc.1
 ```
 
 需要仓库启用 Actions，内置 `GITHUB_TOKEN` 对发布 job 获得 `contents: write` 和 `packages: write`。不需要将长期个人令牌写入仓库。若同名 GHCR 包已有不同权限设置，需在该包设置中授予此仓库访问；首次发布后核对 Packages 可见性和 NAS 拉取权限。公开源码仓库不作为已验证匿名镜像拉取的证据。
@@ -51,7 +51,6 @@ Release 页面显示、全部五项资产可下载、metadata/Compose/template �
 python3 -m unittest discover -s .github/scripts -p 'test_*.py'
 python3 -m unittest discover -s scripts -p 'test_*.py'
 # 需要现成 Docker CLI/daemon；不启动数据库
-a=unused # 不需要额外环境变量
 sh scripts/container-smoke.sh --build
 # 需要真实发布digest；输出目录必须不存在
 sh scripts/package-release.sh vX.Y.Z ghcr.io/davisding/relay-service@sha256:<实际64位摘要> /tmp/relay-release-assets
