@@ -7,6 +7,7 @@
 
 - 工作目录：`/Users/dinghao/Downloads/Relay-Service`；本项目目标承载 NAS 服务端/Web、macOS 27 与 Android 客户端，见 REQUIREMENT D-11/D-13；正式品牌名仍可后续调整。
 - 当前形态：Go 模块化单体 + 嵌入式 React/TypeScript 管理页面的 M1 开发预览。已实现访问控制、服务配置、固定 GET/TCP 基础检查、调度、历史、故障/恢复事件、静默、设备已读和 PostgreSQL 存储代码。需求/设计基线仍为 v1.4-draft；本切片不是完整首期交付或六服务 AC-60 验收。
+- 当前审计修复：已读按实际事件顺序连续确认（批量最多500），配对签发/兑换/撤销与脱敏审计同事务，设备记录授权来源；历史/审计保留默认不删除，仅管理员预览确认后周期分批清理，告警和当前快照保留。前端补全主题/图标/状态样式、接入原生dialog封装与Toast，两个轮询接口独立更新；实际验收范围仍须查本次记录。
 - 产品目标（非已实现事实）：UGOS PRO Docker 服务端、统一运维 Web、M 系列/Apple Silicon macOS 27 站外分发客户端、Android 17 / Xiaomi 15 只读客户端；用户自配反代，项目交付 Web/API 端口。按 REQUIREMENT D-14，现有六服务运维监控必须具备，调用 Key 管理不列必需交付；详细范围由 REQUIREMENT 管理，不在此重复维护需求。
 - 同仓已有 `server/`、`web/`、`deploy/nas/`、`contracts/`；`mac/`、`android/` 尚未创建。`DavisDing/Relay` 仅作为原生 UI/适配器参考，不是首期旧数据迁移来源；本项目首装从空数据初始化。
 
@@ -57,6 +58,7 @@
 | Go 单元/竞态/静态检查 | `server/`：`go test -race ./...`、`go vet ./...` | 部分 HTTP fixture 需允许本机临时监听；默认不连接真实数据库 |
 | Linux 构建 | `server/`：`CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /tmp/relay-linux-amd64 ./cmd/relay` | 交叉编译不是 Linux/Docker 运行验收 |
 | Web 安装/构建 | `web/`：`pnpm install --frozen-lockfile`、`pnpm build` | 输出嵌入 server/internal/webui/dist；安装脚本精确允许 esbuild 版本 |
+| Web 会话竞态回归 | `web/`：`pnpm test` | 用现有TypeScript与Node测试真实API模块的旧会话/响应隔离，不代替浏览器行为验收 |
 | 显式迁移/启动 | `server/`：`go run ./cmd/relay migrate`、`go run ./cmd/relay` | 分别使用迁移/应用角色，需真实配置；本轮未执行 |
 | Compose 入口 | `deploy/nas/`：`docker compose --env-file .env -f docker-compose.yaml config --quiet`，部署见 nas/DEPLOY.md | 远端 CI 已解析两种 Compose；本地 Docker 与 UGOS 尚未验证 |
 | 发布工具检查 | 根目录：`python3 -m unittest discover -s scripts -p 'test_*.py'`、`python3 -m unittest discover -s .github/scripts -p 'test_*.py'` | 离线包/标签合同，不触发发布 |
@@ -64,7 +66,7 @@
 | ARM64 二进制静态检查 | 根目录：`python3 scripts/check-oci-architecture.py <OCI导出tar> arm64` | CI 导出镜像后核对 config 与实际 ELF 架构；不运行 ARM64 程序，不代表设备验收 |
 | 可选数据库测试 | `server/`：设置 `RELAY_TEST_DATABASE_URL` 后 `go test ./internal/storage -run Postgres` | 必须是专用 `_test` 数据库；默认跳过，用户本轮选择不执行 |
 
-已核实的核心限制：workbuddy2api 实际健康合同 NEEDS_CONFIRMATION；MetaCubeXD 纯静态与 all-in-one 能力不同；尚无自动保留清理/Retry-After、通知投递、账本/余额、正文、付费探针、镜像更新、灾备授权轮换或客户端。不可把历史成功缓存、网页可打开或fixture正常响应当成实时健康/全部验收。
+已核实的核心限制：workbuddy2api 实际健康合同 NEEDS_CONFIRMATION；MetaCubeXD 纯静态与 all-in-one 能力不同；尚无容量/磁盘风险告警、上游Retry-After调度退避、通知投递、账本/余额、正文、付费探针、镜像更新、灾备授权轮换或客户端。认证限流429已有Retry-After:300，与上游退避不同；历史/审计已有显式确认后的保留清理，不自动删除永久告警。不可把历史成功缓存、网页可打开或fixture正常响应当成实时健康/全部验收。
 
 ## 5. 项目特殊约束
 

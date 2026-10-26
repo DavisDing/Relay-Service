@@ -27,26 +27,39 @@ const paths = {
 } satisfies Record<string, ReactNode>;
 export type IconName = keyof typeof paths;
 export function Icon({ name }: { name: IconName }) {
-  return <svg className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
+  return (
+    <svg className="icon" width="22" height="22" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"
+      aria-hidden="true" focusable="false">
+      {paths[name]}
+    </svg>
+  );
 }
 
 type ButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'onClick'> & {
   loading?: boolean;
   onClick?: (event: MouseEvent<HTMLButtonElement>) => unknown;
 };
+let lastButtonTrigger: HTMLButtonElement | null = null;
 export function Button({ loading = false, disabled, children, onClick, ...props }: ButtonProps) {
   const [pending, setPending] = useState(false);
   const waiting = loading || pending;
   async function click(event: MouseEvent<HTMLButtonElement>) {
+    // Disabling an async trigger can move focus to body before its dialog
+    // mounts. Preserve that trigger before pending/form state disables it.
+    lastButtonTrigger = event.currentTarget;
     const result = onClick?.(event);
     if (result && typeof (result as Promise<unknown>).then === 'function') {
       setPending(true);
-      try { await result; } finally { setPending(false); }
+      try { await result; }
+      finally { setPending(false); }
     }
   }
-  return <button {...props} disabled={disabled || waiting} aria-busy={waiting || undefined} onClick={click}>
-    {waiting ? <><span className="spinner" aria-hidden="true"/>处理中…</> : children}
-  </button>;
+  return (
+    <button {...props} disabled={disabled || waiting} aria-busy={waiting || undefined} onClick={click}>
+      {waiting ? <><span className="spinner" aria-hidden="true" />处理中…</> : children}
+    </button>
+  );
 }
 
 type Theme = 'system' | 'light' | 'dark';
@@ -57,44 +70,121 @@ const themeOptions: { value: Theme; label: string; icon: IconName }[] = [
 ];
 export function ThemeControl() {
   const [theme, setTheme] = useState<Theme>(() => {
-    try { const saved = localStorage.getItem('relay-theme'); return saved === 'light' || saved === 'dark' ? saved : 'system'; }
-    catch { return 'system'; }
+    try {
+      const saved = localStorage.getItem('relay-theme');
+      return saved === 'light' || saved === 'dark' ? saved : 'system';
+    } catch { return 'system'; }
   });
   useEffect(() => {
     const query = matchMedia('(prefers-color-scheme: dark)');
     function apply() {
       const resolved = theme === 'system' ? (query.matches ? 'dark' : 'light') : theme;
       document.documentElement.dataset.theme = resolved;
-      document.querySelector('meta[name="theme-color"]')?.setAttribute('content', resolved === 'dark' ? '#000000' : '#f5f5f7');
+      const background = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+      document.querySelector('meta[name="theme-color"]')?.setAttribute('content', background);
     }
     apply();
     query.addEventListener('change', apply);
-    try { localStorage.setItem('relay-theme', theme); } catch { /* Appearance remains available without storage. */ }
+    try { localStorage.setItem('relay-theme', theme); }
+    catch { /* Appearance remains available without storage. */ }
     return () => query.removeEventListener('change', apply);
   }, [theme]);
-  return <div className="theme-control" role="group" aria-label="界面外观">{themeOptions.map(option =>
-    <Button type="button" className="icon-button" key={option.value} aria-label={option.label} title={option.label} aria-pressed={theme === option.value} onClick={() => setTheme(option.value)}><Icon name={option.icon}/></Button>
-  )}</div>;
+  return (
+    <div className="theme-control" role="group" aria-label="界面外观">
+      {themeOptions.map(option => (
+        <Button type="button" className="icon-button" key={option.value}
+          aria-label={option.label} title={option.label} aria-pressed={theme === option.value}
+          onClick={() => setTheme(option.value)}>
+          <Icon name={option.icon} />
+        </Button>
+      ))}
+    </div>
+  );
 }
 
+let scrollLockCount = 0;
+let originalOverflow = '';
+const focusableSelector = 'button, a[href], input:not([type="hidden"]), select, textarea, [tabindex]';
+
 export function Modal({ titleId, onClose, busy = false, compact = false, children }: {
-  titleId: string; onClose: () => void; busy?: boolean; compact?: boolean; children: ReactNode;
+  titleId: string;
+  onClose: () => void;
+  busy?: boolean;
+  compact?: boolean;
+  children: ReactNode;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  // Capture the trigger before React's autofocus commit moves focus into the dialog.
+  const activeElement = document.activeElement;
+  const returnFocus = useRef(
+    activeElement instanceof HTMLElement && activeElement !== document.body
+      ? activeElement
+      : lastButtonTrigger?.isConnected ? lastButtonTrigger : null,
+  );
   useEffect(() => {
     const dialog = ref.current!;
-    const previousFocus = document.activeElement as HTMLElement | null;
-    const overflow = document.body.style.overflow;
+    if (scrollLockCount++ === 0) {
+      originalOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+    }
     dialog.showModal();
-    document.body.style.overflow = 'hidden';
-    return () => { dialog.close(); document.body.style.overflow = overflow; previousFocus?.focus(); };
+    dialog.querySelector<HTMLElement>('[data-autofocus], [autofocus]')?.focus();
+    return () => {
+      dialog.close();
+      if (--scrollLockCount === 0) document.body.style.overflow = originalOverflow;
+      const target = returnFocus.current;
+      if (target?.isConnected && !target.matches(':disabled')) target.focus();
+      else {
+        const fallback = document.querySelector<HTMLElement>(
+          'dialog[open] button:not(:disabled), main header button:not(:disabled)',
+        );
+        fallback?.focus();
+      }
+    };
   }, []);
-  return <dialog ref={ref} className={'modal' + (compact ? ' compact' : '')} aria-labelledby={titleId} onCancel={event => { event.preventDefault(); if (!busy) onClose(); }}>
-    {children}
-  </dialog>;
+  return (
+    <dialog ref={ref} className={'modal' + (compact ? ' compact' : '')} tabIndex={-1}
+      aria-labelledby={titleId} aria-busy={busy || undefined}
+      onCancel={event => { event.preventDefault(); if (!busy) onClose(); }}
+      onKeyDown={event => {
+        if (event.key !== 'Tab') return;
+        const dialog = ref.current!;
+        const controls = Array.from(dialog.querySelectorAll<HTMLElement>(focusableSelector))
+          .filter(element => !element.matches(':disabled') && element.tabIndex >= 0 && element.getClientRects().length > 0);
+        const first = controls[0];
+        const last = controls.at(-1);
+        if (!first) { event.preventDefault(); dialog.focus(); return; }
+        if (event.shiftKey && (document.activeElement === first || !controls.includes(document.activeElement as HTMLElement))) {
+          event.preventDefault();
+          last!.focus();
+        } else if (!event.shiftKey && (document.activeElement === last || !controls.includes(document.activeElement as HTMLElement))) {
+          event.preventDefault();
+          first.focus();
+        }
+      }}>
+      {children}
+    </dialog>
+  );
 }
 
 export function Toast({ message, onDismiss }: { message: string; onDismiss: () => void }) {
-  useEffect(() => { if (!message) return; const timer = setTimeout(onDismiss, 4500); return () => clearTimeout(timer); }, [message, onDismiss]);
-  return <div className="toast-region" role="status" aria-live="polite" aria-atomic="true">{message && <div className="toast" key={message}><Icon name="check"/><span>{message}</span><Button className="icon-button" type="button" aria-label="关闭提示" onClick={onDismiss}><Icon name="close"/></Button></div>}</div>;
+  const dismiss = useRef(onDismiss);
+  dismiss.current = onDismiss;
+  useEffect(() => {
+    if (!message) return;
+    const timer = setTimeout(() => dismiss.current(), 4500);
+    return () => clearTimeout(timer);
+  }, [message]);
+  return (
+    <div className="toast-region" role="status" aria-live="polite" aria-atomic="true">
+      {message && (
+        <div className="toast" key={message}>
+          <Icon name="check" /><span>{message}</span>
+          <Button className="icon-button" type="button" aria-label="关闭提示" onClick={onDismiss}>
+            <Icon name="close" />
+          </Button>
+        </div>
+      )}
+    </div>
+  );
 }

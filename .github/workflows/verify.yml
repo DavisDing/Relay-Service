@@ -44,6 +44,9 @@ jobs:
       - name: Install web dependencies from the lockfile
         working-directory: web
         run: pnpm install --frozen-lockfile
+      - name: Verify web session and response races
+        working-directory: web
+        run: pnpm test
       - name: Build the embedded web application
         working-directory: web
         run: pnpm build

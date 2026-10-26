@@ -107,6 +107,9 @@ type Alert struct {
 	Count        int        `json:"count"`
 	Silenced     bool       `json:"silenced"`
 	SilenceUntil *time.Time `json:"silence_until,omitempty"`
+	// EvidenceState is derived on reads; the immutable event summary survives
+	// retention of its associated check history.
+	EvidenceState string `json:"evidence_state"`
 }
 
 type Cryptor interface {

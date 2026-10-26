@@ -24,6 +24,9 @@ func (e *Engine) Run(ctx context.Context) error {
 	if err := e.recoverInterrupted(ctx); err != nil {
 		return err
 	}
+	if err := e.PruneRetention(ctx); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	failures := make(chan error, 2)
@@ -43,6 +46,8 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
+	cleanup := time.NewTicker(30 * time.Second)
+	defer cleanup.Stop()
 	var runErr error
 loop:
 	for {
@@ -52,6 +57,11 @@ loop:
 		case err := <-failures:
 			runErr = err
 			break loop
+		case <-cleanup.C:
+			if err := e.PruneRetention(ctx); err != nil {
+				runErr = err
+				break loop
+			}
 		case <-ticker.C:
 			if err := e.schedule(ctx); err != nil {
 				runErr = err
@@ -123,6 +133,7 @@ func (e *Engine) recoverInterrupted(ctx context.Context) error {
 					p.Check.Class = "process_interrupted"
 					p.Check.Message = "Check interrupted by Relay restart"
 					p.Check.CompletedAt = e.now()
+					p.Check.DurationMS = elapsedMilliseconds(p.Check.StartedAt, p.Check.CompletedAt)
 					if err := e.closePending(tx, p.Check); err != nil {
 						return err
 					}
@@ -232,7 +243,7 @@ func (e *Engine) worker(ctx context.Context) error {
 		}
 		result := e.execute(ctx, rec)
 		c.CompletedAt = e.now()
-		c.DurationMS = c.CompletedAt.Sub(c.StartedAt).Milliseconds()
+		c.DurationMS = elapsedMilliseconds(c.StartedAt, c.CompletedAt)
 		c.Success = result.success
 		c.Status = result.status
 		c.Class = result.class
@@ -254,6 +265,15 @@ func (e *Engine) worker(ctx context.Context) error {
 			return err
 		}
 	}
+}
+
+// A missing start is an unmeasured duration, and wall-clock corrections must
+// never turn an observation's elapsed time negative.
+func elapsedMilliseconds(start, end time.Time) int64 {
+	if start.IsZero() || end.Before(start) {
+		return 0
+	}
+	return end.Sub(start).Milliseconds()
 }
 func (e *Engine) finish(ctx context.Context, c Check) error {
 	return e.store.Update(ctx, func(tx storage.Tx) error {

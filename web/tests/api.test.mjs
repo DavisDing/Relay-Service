@@ -1,0 +1,112 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { afterEach, test } from 'node:test';
+import ts from 'typescript';
+
+// Execute the real API module using the project's locked TypeScript compiler.
+// No browser, database, network or additional test dependency is required.
+const source = readFileSync(new URL('../src/api.ts', import.meta.url), 'utf8');
+const compiled = ts.transpileModule(source, {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 },
+}).outputText;
+const originalFetch = globalThis.fetch;
+const originalDocument = globalThis.document;
+let moduleID = 0;
+async function freshAPI() {
+  globalThis.document = { cookie: 'relay_csrf=fixture-token' };
+  const encoded = Buffer.from(compiled).toString('base64');
+  return import(`data:text/javascript;base64,${encoded}#test-${++moduleID}`);
+}
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((onResolve, onReject) => { resolve = onResolve; reject = onReject; });
+  return { promise, resolve, reject };
+}
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+  if (originalDocument === undefined) delete globalThis.document;
+  else globalThis.document = originalDocument;
+});
+
+test('current responses retain CSRF and same-origin credentials', async () => {
+  const { api } = await freshAPI();
+  globalThis.fetch = async (_url, options) => {
+    assert.equal(options.headers['X-Relay-CSRF'], 'fixture-token');
+    assert.equal(options.credentials, 'same-origin');
+    return { ok: true, status: 200, json: async () => ({ data: { ok: true } }) };
+  };
+  assert.deepEqual((await api('/fixture', 'POST', {})).data, { ok: true });
+});
+
+test('current 401 remains an authentication error', async () => {
+  const { api, APIError } = await freshAPI();
+  globalThis.fetch = async () => ({
+    ok: false, status: 401, json: async () => ({ error: { message: 'expired' } }),
+  });
+  await assert.rejects(api('/fixture'), error => error instanceof APIError && error.status === 401);
+});
+
+test('invalidation aborts transport and suppresses a late success even if abort is ignored', async () => {
+  const { api, invalidateAPIRequests, APIRequestSupersededError } = await freshAPI();
+  const pending = deferred();
+  let signal;
+  globalThis.fetch = (_url, options) => { signal = options.signal; return pending.promise; };
+  const result = api('/fixture');
+  invalidateAPIRequests();
+  assert.equal(signal.aborted, true);
+  pending.resolve({ ok: true, status: 200, json: async () => ({ data: 'old-session' }) });
+  await assert.rejects(result, error => error instanceof APIRequestSupersededError && error.message === '');
+});
+
+test('a late 401 from an old session cannot expire the new session', async () => {
+  const { api, invalidateAPIRequests, APIRequestSupersededError, APIError } = await freshAPI();
+  const pending = deferred();
+  globalThis.fetch = () => pending.promise;
+  const old = api('/fixture');
+  invalidateAPIRequests();
+  pending.resolve({ ok: false, status: 401, json: async () => ({ error: { message: 'old expired' } }) });
+  await assert.rejects(old, error => error instanceof APIRequestSupersededError && !(error instanceof APIError));
+});
+
+test('invalidation during response parsing suppresses the old body', async () => {
+  const { api, invalidateAPIRequests, APIRequestSupersededError } = await freshAPI();
+  const body = deferred();
+  const parsing = deferred();
+  globalThis.fetch = async () => ({
+    ok: true, status: 200, json: () => { parsing.resolve(); return body.promise; },
+  });
+  const old = api('/fixture');
+  await parsing.promise;
+  invalidateAPIRequests();
+  body.resolve({ data: 'old-body' });
+  await assert.rejects(old, APIRequestSupersededError);
+});
+
+test('invalidation during parsing suppresses a stale malformed-body error', async () => {
+  const { api, invalidateAPIRequests, APIRequestSupersededError } = await freshAPI();
+  const body = deferred();
+  const parsing = deferred();
+  globalThis.fetch = async () => ({
+    ok: true, status: 200, json: () => { parsing.resolve(); return body.promise; },
+  });
+  const old = api('/fixture');
+  await parsing.promise;
+  invalidateAPIRequests();
+  body.reject(new Error('old malformed JSON'));
+  await assert.rejects(old, APIRequestSupersededError);
+});
+
+test('current network failures remain visible', async () => {
+  const { api } = await freshAPI();
+  globalThis.fetch = async () => { throw new Error('network-offline'); };
+  await assert.rejects(api('/fixture'), /network-offline/);
+});
+
+test('a new generation can immediately read the new login identity', async () => {
+  const { api, invalidateAPIRequests } = await freshAPI();
+  invalidateAPIRequests();
+  globalThis.fetch = async () => ({
+    ok: true, status: 200, json: async () => ({ data: { id: 'admin', role: 'admin' } }),
+  });
+  assert.equal((await api('/auth/me')).data.id, 'admin');
+});

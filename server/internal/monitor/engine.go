@@ -253,11 +253,7 @@ func (e *Engine) Remove(ctx context.Context, actor, id string, generation int64)
 	})
 }
 func (e *Engine) audit(tx storage.Tx, actor, target, action string, now time.Time) error {
-	n, err := tx.Next("monitor.audit")
-	if err != nil {
-		return err
-	}
-	return tx.Put(auditBucket, sequenceKey(n), map[string]any{"actor_id": actor, "target_id": target, "action": action, "at": now})
+	return storage.AppendAudit(tx, storage.AuditRecord{ActorID: actor, TargetID: target, Action: action, At: now})
 }
 
 func (e *Engine) serviceWithState(tx storage.Tx, rec serviceRecord) (Service, error) {
@@ -361,7 +357,23 @@ func (e *Engine) RequestCheck(ctx context.Context, id, operationID string, gener
 			if out.Generation != generation {
 				return ErrConflict
 			}
-			return tx.Get(historyBucket, historyKey(id, out.Cursor), &out)
+			if err := tx.Get(historyBucket, historyKey(id, out.Cursor), &out); err == nil {
+				return nil
+			} else if !errors.Is(err, storage.ErrNotFound) {
+				return err
+			}
+			// The idempotency window ends with the retained observation, even
+			// when the background sweep has not reached this handle yet. Never
+			// replace work which is still queued or running.
+			var p pending
+			if err := tx.Get(queueBucket, out.Cursor, &p); err == nil {
+				return ErrConflict
+			} else if !errors.Is(err, storage.ErrNotFound) {
+				return err
+			}
+			if err := tx.Delete(operationBucket, key); err != nil {
+				return err
+			}
 		} else if !errors.Is(err, storage.ErrNotFound) {
 			return err
 		}
@@ -462,6 +474,11 @@ func (e *Engine) Alerts(ctx context.Context, cursor string, limit int) ([]Alert,
 	}
 	out := []Alert{}
 	err := e.store.View(ctx, func(tx storage.Tx) error {
+		policy, err := readRetention(tx)
+		if err != nil {
+			return err
+		}
+		historyCutoff := retentionCutoff(e.now(), policy.HistoryDays)
 		rows, err := tx.Scan(alertsBucket, storage.Scan{After: after, Limit: pageLimit(limit)})
 		if err != nil {
 			return err
@@ -470,6 +487,15 @@ func (e *Engine) Alerts(ctx context.Context, cursor string, limit int) ([]Alert,
 			var a Alert
 			if err := json.Unmarshal(row.Value, &a); err != nil {
 				return err
+			}
+			a.EvidenceState = "unavailable"
+			var checkCursor string
+			if err := tx.Get(checkIndexBucket, a.ServiceID+"/"+a.CheckID, &checkCursor); err == nil {
+				a.EvidenceState = "available"
+			} else if !errors.Is(err, storage.ErrNotFound) {
+				return err
+			} else if historyCutoff != nil && !a.StartedAt.IsZero() && a.StartedAt.Before(*historyCutoff) {
+				a.EvidenceState = "expired"
 			}
 			var until time.Time
 			for _, scope := range []string{"*", a.ServiceID} {
@@ -491,9 +517,26 @@ func (e *Engine) Alerts(ctx context.Context, cursor string, limit int) ([]Alert,
 	})
 	return out, err
 }
-func (e *Engine) Ack(ctx context.Context, deviceID string, cursor uint64) error {
-	if deviceID == "" {
+
+// Ack advances only this principal's read position. A batch must enumerate the
+// actual alerts observed in order, starting with the next unread stored alert;
+// a cursor alone acknowledges only the next alert. Numeric sequence gaps are
+// allowed, but skipping an unread stored event is not.
+func (e *Engine) Ack(ctx context.Context, deviceID string, cursor uint64, observed ...uint64) error {
+	if deviceID == "" || len(observed) > 500 {
 		return ErrValidation
+	}
+	if len(observed) == 0 {
+		observed = []uint64{cursor}
+	} else {
+		if observed[len(observed)-1] != cursor {
+			return ErrValidation
+		}
+		for i, value := range observed {
+			if value == 0 || (i > 0 && value <= observed[i-1]) {
+				return ErrValidation
+			}
+		}
 	}
 	return e.store.Update(ctx, func(tx storage.Tx) error {
 		var old uint64
@@ -503,9 +546,42 @@ func (e *Engine) Ack(ctx context.Context, deviceID string, cursor uint64) error 
 		if cursor < old {
 			return ErrConflict
 		}
-		if cursor > 0 {
-			var a Alert
-			if err := tx.Get(alertsBucket, sequenceKey(cursor), &a); err != nil {
+		if cursor == old {
+			return nil
+		}
+		// Concurrent requests may have acknowledged a prefix of the same page.
+		// Validate only the remaining suffix against the persisted event order.
+		first := 0
+		for first < len(observed) && observed[first] <= old {
+			var prior Alert
+			if err := tx.Get(alertsBucket, sequenceKey(observed[first]), &prior); err != nil {
+				if errors.Is(err, storage.ErrNotFound) {
+					return ErrValidation
+				}
+				return err
+			}
+			if prior.Cursor != observed[first] {
+				return ErrValidation
+			}
+			first++
+		}
+		unread := observed[first:]
+		rows, err := tx.Scan(alertsBucket, storage.Scan{After: sequenceKey(old), Limit: len(unread)})
+		if err != nil {
+			return err
+		}
+		if len(rows) != len(unread) {
+			return ErrValidation
+		}
+		for i, row := range rows {
+			if row.Key != sequenceKey(unread[i]) {
+				return ErrValidation
+			}
+			var alert Alert
+			if err := json.Unmarshal(row.Value, &alert); err != nil {
+				return err
+			}
+			if alert.Cursor != unread[i] {
 				return ErrValidation
 			}
 		}

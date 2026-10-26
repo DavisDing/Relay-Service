@@ -81,7 +81,8 @@ type checkPayload struct {
 	Generation  int64  `json:"generation"`
 }
 type ackPayload struct {
-	Cursor uint64 `json:"cursor"`
+	Cursor  uint64   `json:"cursor"`
+	Cursors []uint64 `json:"cursors,omitempty"`
 }
 type silencePayload struct {
 	Until  time.Time `json:"until"`
@@ -315,7 +316,7 @@ func (s *Server) routes() {
 			return nil, 0, err
 		}
 		actor, _ := principal(q.r.Context())
-		if err := q.s.monitor.Ack(q.r.Context(), actor.ID, p.Cursor); err != nil {
+		if err := q.s.monitor.Ack(q.r.Context(), actor.ID, p.Cursor, p.Cursors...); err != nil {
 			return nil, 0, err
 		}
 		return map[string]any{"acknowledged": true}, http.StatusOK, nil
@@ -335,6 +336,7 @@ func (s *Server) routes() {
 		out, err := q.s.monitor.Diagnostic(q.r.Context())
 		return out, http.StatusOK, err
 	}})
+	s.retentionRoutes()
 }
 
 func (s *Server) handle(pattern string, rt route) {

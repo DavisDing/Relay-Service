@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base32"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -17,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/argon2"
 	"relayservice/internal/storage"
@@ -49,6 +52,7 @@ const (
 	pairingFailureLimit = 10
 	pairingLockDuration = 5 * time.Minute
 	loginLockDuration   = 5 * time.Minute
+	legacyIssuer        = "legacy_unknown"
 )
 
 type Service struct {
@@ -157,6 +161,7 @@ type deviceRecord struct {
 type Device struct {
 	ID        string     `json:"id"`
 	Name      string     `json:"name"`
+	IssuedBy  string     `json:"issued_by"`
 	CreatedAt time.Time  `json:"created_at"`
 	ExpiresAt time.Time  `json:"expires_at"`
 	RevokedAt *time.Time `json:"revoked_at,omitempty"`
@@ -174,6 +179,7 @@ type pairing struct {
 	Digest    string    `json:"digest"`
 	ExpiresAt time.Time `json:"expires_at"`
 	Attempts  int       `json:"attempts"`
+	IssuedBy  string    `json:"issued_by,omitempty"`
 }
 type DeviceToken struct {
 	Token     string    `json:"token"`
@@ -336,9 +342,11 @@ func (s *Service) CreatePairing(ctx context.Context, actorID string) (Pairing, e
 	if _, err := io.ReadFull(s.random, codeBytes); err != nil {
 		return Pairing{}, err
 	}
-	code := strings.ToUpper(base64.RawURLEncoding.EncodeToString(codeBytes))
+	// Base32 has a single letter case. Unlike uppercasing base64url, this
+	// encoding preserves every bit from the random source.
+	code := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(codeBytes)
 	expires := s.now().Add(pairingTTL)
-	item := pairing{Digest: digestToken(code), ExpiresAt: expires}
+	item := pairing{Digest: digestToken(code), ExpiresAt: expires, IssuedBy: actorID}
 	err := s.store.Update(ctx, func(tx storage.Tx) error {
 		var lock time.Time
 		if err := tx.Get(stateBucket, pairLockKey, &lock); err == nil && s.now().Before(lock) {
@@ -346,7 +354,10 @@ func (s *Service) CreatePairing(ctx context.Context, actorID string) (Pairing, e
 		} else if err != nil && !errors.Is(err, storage.ErrNotFound) {
 			return err
 		}
-		return tx.Put(pairingBucket, item.Digest, item)
+		if err := tx.Put(pairingBucket, item.Digest, item); err != nil {
+			return err
+		}
+		return storage.AppendAudit(tx, storage.AuditRecord{ActorID: actorID, Action: "device.pairing_issued", At: s.now()})
 	})
 	if err != nil {
 		return Pairing{}, err
@@ -356,9 +367,17 @@ func (s *Service) CreatePairing(ctx context.Context, actorID string) (Pairing, e
 
 func (s *Service) Pair(ctx context.Context, code, name string) (DeviceToken, error) {
 	code = strings.TrimSpace(code)
+	if !validDeviceName(name) {
+		return DeviceToken{}, ErrInvalidInput
+	}
 	name = strings.TrimSpace(name)
 	if code == "" || len(code) > 64 || len(name) < 1 || len(name) > 80 {
 		return DeviceToken{}, ErrInvalidInput
+	}
+	// New codes are 13-character base32. Legacy codes were 11-character
+	// uppercase base64url and must keep their original lookup behavior.
+	if len(code) == 13 {
+		code = strings.ToUpper(code)
 	}
 	token, tokenDigest, err := s.newToken()
 	if err != nil {
@@ -411,8 +430,15 @@ func (s *Service) Pair(ctx context.Context, code, name string) (DeviceToken, err
 		if err := tx.Put(stateBucket, pairFailuresKey, 0); err != nil {
 			return err
 		}
-		record := deviceRecord{Device: Device{ID: deviceID, Name: name, CreatedAt: s.now(), ExpiresAt: expiresAt}, TokenDigest: tokenDigest, ExpiresAt: expiresAt}
-		return tx.Put(deviceBucket, tokenDigest, record)
+		issuer := item.IssuedBy
+		if issuer == "" {
+			issuer = legacyIssuer
+		}
+		record := deviceRecord{Device: Device{ID: deviceID, Name: name, IssuedBy: issuer, CreatedAt: s.now(), ExpiresAt: expiresAt}, TokenDigest: tokenDigest, ExpiresAt: expiresAt}
+		if err := tx.Put(deviceBucket, tokenDigest, record); err != nil {
+			return err
+		}
+		return storage.AppendAudit(tx, storage.AuditRecord{ActorID: issuer, TargetID: deviceID, Action: "device.paired", At: s.now()})
 	})
 	if err != nil {
 		return DeviceToken{}, err
@@ -421,6 +447,22 @@ func (s *Service) Pair(ctx context.Context, code, name string) (DeviceToken, err
 		return DeviceToken{}, resultErr
 	}
 	return DeviceToken{Token: token, DeviceID: deviceID, ExpiresAt: expiresAt}, nil
+}
+
+func validDeviceName(name string) bool {
+	if !utf8.ValidString(name) {
+		return false
+	}
+	for _, r := range name {
+		// Reject control characters and Unicode bidi controls, which can
+		// conceal or visually reorder identities in administration screens.
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' || r == '\u061c' ||
+			r == '\u200e' || r == '\u200f' || (r >= '\u202a' && r <= '\u202e') ||
+			(r >= '\u2066' && r <= '\u2069') {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Service) Devices(ctx context.Context) ([]Device, error) {
@@ -438,6 +480,9 @@ func (s *Service) Devices(ctx context.Context) ([]Device, error) {
 					return err
 				}
 				record.Device.ExpiresAt = record.ExpiresAt
+				if record.Device.IssuedBy == "" {
+					record.Device.IssuedBy = legacyIssuer
+				}
 				devices = append(devices, record.Device)
 			}
 			if len(records) < 500 {
@@ -474,7 +519,11 @@ func (s *Service) Revoke(ctx context.Context, id string) error {
 					now := s.now()
 					record.Device.RevokedAt = &now
 					record.TokenDigest = ""
-					return tx.Put(deviceBucket, item.Key, record)
+					if err := tx.Put(deviceBucket, item.Key, record); err != nil {
+						return err
+					}
+					// Revoke is exposed only by the single-administrator route.
+					return storage.AppendAudit(tx, storage.AuditRecord{ActorID: "admin", TargetID: id, Action: "device.revoked", At: now})
 				}
 			}
 			if len(records) < 500 {
