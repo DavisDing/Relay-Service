@@ -10,7 +10,7 @@
 | `server/internal/monitor` | 六服务kind/HTTP/TCP、固定无推理端点、SSRF/私网授权、两个worker、周期与手动幂等检查、代际与中断隔离、分页历史、故障/恢复/受限事件、静默、设备独立已读 | WP-2，AC-25/32/38/46/60 的基础切片；端点证据和未验证服务见 COMPATIBILITY |
 | `server/internal/api` / `web/` | v1 API、初始化登录、服务增改暂停移除/阈值/凭据清除、历史/告警分页、配对设备、脱敏诊断、Cookie/Origin/CSRF与只读投影 | WP-3，AC-19/53/56/57/60 的基础页面/API |
 | `server/internal/storage` | PostgreSQL JSONB记录/计数表、原子短事务、data_version、显式迁移、schema匹配与数据库单活锁；内存Store仅用于测试 | WP-1/8；真实持久化与SQL权限/锁未实测 |
-| `.github/` / `scripts/` | PR/main CI、tag Release、GHCR 双架构镜像、digest部署包/校验和、发布前验证 | 上述提交 CI 已通过；实际发布路径未执行 |
+| `.github/` / `scripts/` | PR/main CI、tag Release、GHCR 双架构镜像、digest部署包/校验和、发布前验证 | 上述提交 CI 与预发布流程已通过；完整业务验收仍未完成 |
 | `cmd/relay` / `deploy/nas` | 启动/退出、live/ready、独立迁移/版本命令、Dockerfile/拉取镜像Compose/源码构建覆盖文件、角色初始化、随机秘密生成模板 | 部署资产；v0.1.0-alpha.1 已发布；UGOS导入未实测 |
 
 首期完整的账本、目录/余额、模型/路由写入、正文、付费探针/质量、通知投递、版本/digest更新、原生Mac/Android、灾备授权轮换均尚未实现。本版还没有自动历史/审计保留清理、容量限制和上游 Retry-After 退避，不建议作为已验收生产服务。
