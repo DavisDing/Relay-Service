@@ -1,12 +1,12 @@
 # NAS Docker 开发预览部署
 
-本轮交付 Go 服务端与已嵌入的 React 页面，以及新建 Relay 自有 PostgreSQL 的 Compose。属于 M1 基础监控切片；真实数据库/权限/迁移、Docker 构建运行和 UGOS Projects 均未验收。六服务的接口前提见 [COMPATIBILITY.md](../COMPATIBILITY.md)。调用 Key、模型路由写入、付费探针、账本余额、正文、原生客户端和镜像更新不在本轮代码范围。
+本轮交付 Go 服务端与已嵌入的 React 页面，以及新建 Relay 自有 PostgreSQL 的 Compose。属于 M1 基础监控切片；CI 已通过镜像构建及无数据库的 amd64 基础运行检查；真实数据库/权限/迁移、完整容器启动和 UGOS Projects 未验收。六服务的接口前提见 [COMPATIBILITY.md](../COMPATIBILITY.md)。调用 Key、模型路由写入、付费探针、账本余额、正文、原生客户端和镜像更新不在本轮代码范围。
 
 ## 1. 准备发布包和配置
 
 发布流程提供 `relay-service-vX.Y.Z-nas.tar.gz`，完整解压到同一文件夹后即可使用；包内包含 `docker-compose.yaml`、`.env.example`、`generate-env.sh` 和 `init-db/001-roles.sh`，不需要 Go/Node 或源代码。默认 Compose 从 GHCR 拉取镜像，两项 Relay 服务共用 `RELAY_IMAGE`。发布模板填入该次构建的 `sha256` 摘要；源码模板只是占位，不能直接部署。
 
-GitHub Release 另附 `docker-compose.yaml`、版本化环境模板、`release-metadata.json` 和 `SHA256SUMS`。单独下载 YAML 仍缺少初始化脚本，应使用完整压缩包。首次发布尚未执行；自动化配置见 [RELEASE.md](RELEASE.md)，不能把示例版本当成已有可下载资产。
+GitHub Release 另附 `docker-compose.yaml`、版本化环境模板、`release-metadata.json` 和 `SHA256SUMS`。单独下载 YAML 仍缺少初始化脚本，应使用完整压缩包。已发布 [v0.1.0-alpha.1](https://github.com/DavisDing/Relay-Service/releases/tag/v0.1.0-alpha.1)，包含完整 NAS 包和 GHCR 双架构镜像；自动化配置见 [RELEASE.md](RELEASE.md)。
 
 ```sh
 # 在解压后的包目录
@@ -42,7 +42,7 @@ docker compose --env-file .env -f docker-compose.yaml up -d
 
 首次顺序为 PostgreSQL 健康 → `relay-migrate` 一次性显式迁移成功 → `relay` 启动。schema 不匹配、库不可用、已有活动 Relay 或迁移失败会阻止启动。一个数据库只允许一个 Relay 进程持有调度锁；不构成自动 HA。
 
-UGREEN Docker Projects 导入 `docker-compose.yaml` 时必须保留同目录 `.env` 和 `init-db/001-roles.sh`，并配置既有外部网络。GHCR 包必须对 NAS 可读取；首次发布后需核对 Packages 可见性，私有包需要部署者预先认证。GUI 的依赖条件和环境文件处理尚未实测；不以文件可导入代替实际验收。
+UGREEN Docker Projects 导入 `docker-compose.yaml` 时必须保留同目录 `.env` 和 `init-db/001-roles.sh`，并配置既有外部网络。v0.1.0-alpha.1 的 GHCR digest 已核实支持匿名 manifest 拉取，NAS 仍须具备到 GHCR 的网络访问。未来私有包需要部署者预先认证。GUI 的依赖条件和环境文件处理尚未实测；不以文件可导入代替实际验收。
 
 需要从源代码构建时，在仓库 `deploy/nas/` 使用独立覆盖文件：
 
