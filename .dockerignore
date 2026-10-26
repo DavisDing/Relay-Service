@@ -1,0 +1,16 @@
+.git
+.github
+.codex
+.agents
+**/.env
+**/.env.*
+!**/.env.example
+**/node_modules
+**/.pnpm-store
+**/*.test
+**/*.out
+**/__pycache__
+server/bin
+server/internal/webui/dist
+dist
+.DS_Store

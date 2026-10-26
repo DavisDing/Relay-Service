@@ -1,0 +1,117 @@
+name: Verify NAS delivery
+
+on:
+  workflow_call:
+    inputs:
+      source-ref:
+        description: Exact commit or ref to verify
+        required: true
+        type: string
+      version:
+        description: Version embedded in the container
+        default: dev
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Web, Go, packages and containers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RELAY_TEST_DATABASE_URL: ""
+      DOCKER_BUILD_SUMMARY: "false"
+      DOCKER_BUILD_RECORD_UPLOAD: "false"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source-ref }}
+          persist-credentials: false
+      - name: Resolve checked-out image metadata
+        id: source
+        run: |
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "created=$(git show -s --format=%cI HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22.23.4"
+      - name: Install the locked package manager
+        run: npm install --global pnpm@11.25.0
+      - name: Install web dependencies from the lockfile
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+      - name: Build the embedded web application
+        working-directory: web
+        run: pnpm build
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.3"
+          cache-dependency-path: server/go.sum
+      - name: Verify Go module checksums
+        working-directory: server
+        run: go mod verify
+      - name: Run Go tests with the race detector
+        working-directory: server
+        run: go test -race ./...
+      - name: Run Go static checks
+        working-directory: server
+        run: go vet ./...
+      - name: Test release metadata validation
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+      - name: Test release packaging
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
+      - name: Validate release and local-build Compose configuration
+        run: |
+          task_dir=$(mktemp -d)
+          trap 'rm -rf "$task_dir"' EXIT
+          RELAY_IMAGE=relay-service:local sh deploy/nas/generate-env.sh "$task_dir/.env"
+          docker compose --env-file "$task_dir/.env" -f deploy/nas/docker-compose.yaml config --quiet
+          docker compose --env-file "$task_dir/.env" -f deploy/nas/docker-compose.yaml \
+            -f deploy/nas/docker-compose.local-build.yaml config --quiet
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+      - name: Build and load Linux amd64 image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/nas/Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: relay-service:ci-amd64
+          build-args: |
+            VERSION=${{ inputs.version }}
+            REVISION=${{ steps.source.outputs.commit }}
+            CREATED=${{ steps.source.outputs.created }}
+      - name: Check the Linux amd64 container without a database
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+          EXPECTED_REVISION: ${{ steps.source.outputs.commit }}
+        run: sh scripts/container-smoke.sh relay-service:ci-amd64 "$EXPECTED_VERSION" "$EXPECTED_REVISION"
+      - name: Build Linux arm64 image without running it
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/nas/Dockerfile
+          platforms: linux/arm64
+          push: false
+          outputs: type=oci,dest=/tmp/relay-service-arm64.tar
+          build-args: |
+            VERSION=${{ inputs.version }}
+            REVISION=${{ steps.source.outputs.commit }}
+            CREATED=${{ steps.source.outputs.created }}
+      - name: Record validation boundaries
+        if: always()
+        run: |
+          {
+            echo '### NAS delivery validation boundaries'
+            echo '- Linux amd64: Docker build and container checks without PostgreSQL.'
+            echo '- Linux arm64: build only; no runtime or device acceptance.'
+            echo '- PostgreSQL integration: intentionally skipped; no test database is configured.'
+            echo '- NAS, UGOS Projects, upstream services and browser/device acceptance remain separate.'
+          } >> "$GITHUB_STEP_SUMMARY"

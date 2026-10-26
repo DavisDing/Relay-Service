@@ -1,1 +1,11 @@
 .DS_Store
+.env
+.env.*
+!.env.example
+node_modules/
+.pnpm-store/
+server/bin/
+*.test
+*.out
+dist/
+__pycache__/

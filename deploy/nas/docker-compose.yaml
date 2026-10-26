@@ -1,0 +1,84 @@
+name: relay-service
+services:
+  relay-migrate:
+    image: ${RELAY_IMAGE:?set RELAY_IMAGE to the release image digest}
+    command: ["migrate"]
+    restart: "no"
+    user: "65532:65532"
+    environment:
+      RELAY_DATABASE_URL: postgres://relay_migrator:${RELAY_MIGRATOR_PASSWORD:?set RELAY_MIGRATOR_PASSWORD}@postgres:5432/relay?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - relay-backend
+
+  relay:
+    image: ${RELAY_IMAGE:?set RELAY_IMAGE to the release image digest}
+    container_name: relay-service
+    restart: unless-stopped
+    init: true
+    user: "65532:65532"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:noexec,nosuid,size=16m,uid=65532,gid=65532
+    environment:
+      RELAY_LISTEN_ADDR: :8787
+      RELAY_PUBLIC_URL: ${RELAY_PUBLIC_URL:-http://127.0.0.1:8787}
+      RELAY_DATABASE_URL: postgres://relay_app:${RELAY_APP_PASSWORD:?set RELAY_APP_PASSWORD}@postgres:5432/relay?sslmode=disable
+      RELAY_BOOTSTRAP_TOKEN: ${RELAY_BOOTSTRAP_TOKEN:-}
+      RELAY_ENCRYPTION_KEY: ${RELAY_ENCRYPTION_KEY:?set RELAY_ENCRYPTION_KEY}
+      RELAY_SECURE_COOKIES: ${RELAY_SECURE_COOKIES:-false}
+      RELAY_LOG_LEVEL: ${RELAY_LOG_LEVEL:-info}
+    ports:
+      - "${RELAY_BIND_ADDRESS:-127.0.0.1}:${RELAY_HOST_PORT:-8787}:8787"
+    depends_on:
+      relay-migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    networks:
+      - relay-backend
+      - ai-network
+    healthcheck:
+      test: ["CMD","/relay","healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  postgres:
+    image: postgres:latest
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?set POSTGRES_SUPERUSER_PASSWORD}
+      RELAY_DB_PASSWORD: ${RELAY_DB_PASSWORD:?set RELAY_DB_PASSWORD}
+      RELAY_MIGRATOR_PASSWORD: ${RELAY_MIGRATOR_PASSWORD:?set RELAY_MIGRATOR_PASSWORD}
+      RELAY_APP_PASSWORD: ${RELAY_APP_PASSWORD:?set RELAY_APP_PASSWORD}
+    volumes:
+      - relay-postgres:/var/lib/postgresql
+      - ./init-db/001-roles.sh:/docker-entrypoint-initdb.d/001-roles.sh:ro
+    networks:
+      - relay-backend
+    healthcheck:
+      test: ["CMD-SHELL","pg_isready -U postgres -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
+volumes:
+  relay-postgres:
+
+networks:
+  relay-backend:
+    driver: bridge
+  ai-network:
+    external: true
+    name: ${AI_NETWORK_NAME:-ai-network}
