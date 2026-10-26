@@ -5,10 +5,10 @@
 
 ## 1. 项目概况
 
-- 工作目录：`/Users/dinghao/Downloads/Relay-Service`；本项目同时承载 NAS 服务端/Web 与 macOS 27 客户端，见 REQUIREMENT D-11；正式品牌名仍可后续调整。
-- 当前形态：需求与设计准备仓库。原 Git 跟踪 `.gitignore`、`AGENTS.md`、`docs/AI_CONTEXT.md`、`docs/REQUIREMENT.md`、`docs/DESIGN.md`，新增 `docs/DEPLOYMENT.md` 为配置步骤文档，不是业务实现；目前没有业务源码、运行服务或测试工程。
-- 产品目标（非已实现事实）：UGOS PRO 的 Docker 服务端、NAS Web 管理端及 M 系列/Apple Silicon macOS 27 站外分发客户端；用户自配反代，项目交付 Web/API 端口。确认状态和详细范围由 REQUIREMENT 管理，不在此重复维护整份需求。
-- 本项目目标包含 NAS 服务端/Web 与 Mac 客户端，但当前仓库仍只有文档，没有 Mac Swift 源码或构建配置。`DavisDing/Relay` 仅作为原生 UI/适配器参考，不是首期旧数据迁移来源；本项目后续 Mac 代码应按 D-11 的同仓边界纳入。
+- 工作目录：`/Users/dinghao/Downloads/Relay-Service`；本项目目标承载 NAS 服务端/Web、macOS 27 与 Android 客户端，见 REQUIREMENT D-11/D-13；正式品牌名仍可后续调整。
+- 当前形态：需求与设计准备仓库，只有协作配置与文档；`docs/README.md` 为文档导航，需求/设计配套版本为 v1.1-draft（2026-10-26 整理）。部署文档和操作手册不是业务实现；目前没有业务源码、运行服务、构建配置或测试工程。
+- 产品目标（非已实现事实）：UGOS PRO Docker 服务端、统一运维 Web、M 系列/Apple Silicon macOS 27 站外分发客户端、Android 17 / Xiaomi 15 只读客户端；用户自配反代，项目交付 Web/API 端口。详细范围由 REQUIREMENT 管理，不在此重复维护需求。
+- 同仓 `server/`、`web/`、`mac/`、`android/` 等为设计路径，当前均未创建。`DavisDing/Relay` 仅作为原生 UI/适配器参考，不是首期旧数据迁移来源；本项目首装从空数据初始化。
 
 ## 2. 技术与环境
 
@@ -23,10 +23,12 @@
 | 路径 | 当前职责 |
 |---|---|
 | `AGENTS.md` | 协作入口、文档读取顺序、保护已有修改和阶段边界 |
+| `docs/README.md` | 文档导航、配套版本、需求/设计/操作手册阅读顺序 |
 | `docs/REQUIREMENT.md` | 已确认需求、提案、首期范围、FR/AC、D/T/E/O 决策登记 |
 | `docs/DESIGN.md` | 新项目同仓架构/升级兼容方案；记录约束与设计责任，不假装存在已落地架构 |
 | `docs/AI_CONTEXT.md` | 当前仓库事实、长期边界、已核实检查入口 |
 | `docs/DEPLOYMENT.md` | 已创建的 LiteLLM 数据库配置指引/示例；尚未部署/实测 |
+| `docs/NAS_SETUP.md` | 按用户既有 Compose 整理的 PostgreSQL/LiteLLM 用量日志操作入口；正文关闭，尚未执行 |
 | `.gitignore` | 当前忽略 `.DS_Store` |
 
 没有 API、页面、适配器、调度器、持久化模块或 Mac 入口可引用。新增实现后依据实际代码更新导航，不提前虚构 Controller/Service/DAO 等层次。
