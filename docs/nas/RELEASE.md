@@ -1,6 +1,6 @@
 # NAS CI、Packages 与 Release
 
-本仓库已提供自动化代码；本地配置和离线检查不等于远端工作流成功，也不代表已发布。2026-10-26 核对远端时尚无 Release 或 Actions 运行记录；首次发布前需提交当前源码与工作流，并获得发布范围授权。当前应用为 M1 基础监控开发预览，数据库/NAS/六服务/客户端的验收边界见 [VALIDATION.md](VALIDATION.md)。
+本仓库已提供自动化代码。2026-10-26，提交 `3275bc9` 的 [CI #40324849098](https://github.com/DavisDing/Relay-Service/actions/runs/40324849098) 已通过，包含 Compose 解析、amd64 容器基础检查和 arm64 构建；尚无 Release。后续工作区修改不能继承该提交的验证结果；首次版本发布仍需明确版本和渠道。当前应用为 M1 基础监控开发预览，数据库/NAS/六服务/客户端的验收边界见 [VALIDATION.md](VALIDATION.md)。
 
 ## 1. 触发和检查
 
@@ -51,7 +51,6 @@ Release 页面显示、全部五项资产可下载、metadata/Compose/template �
 python3 -m unittest discover -s .github/scripts -p 'test_*.py'
 python3 -m unittest discover -s scripts -p 'test_*.py'
 # 需要现成 Docker CLI/daemon；不启动数据库
-a=unused # 不需要额外环境变量
 sh scripts/container-smoke.sh --build
 # 需要真实发布digest；输出目录必须不存在
 sh scripts/package-release.sh vX.Y.Z ghcr.io/davisding/relay-service@sha256:<实际64位摘要> /tmp/relay-release-assets

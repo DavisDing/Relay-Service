@@ -1,6 +1,6 @@
 # NAS M1 开发预览：交付与验证记录
 
-日期：2026-10-26。范围是本轮工作区中的 Go/React 基础监控切片；未提交、推送或部署，不对应远端 CI/release。需求基线 v1.4-draft 保持不变。本记录不把局部代码或内存 fixture 升级为数据库、Docker、NAS、浏览器或完整产品通过。
+日期：2026-10-26。范围是本轮 Go/React 基础监控切片与发布自动化。提交 `3275bc9f5ab613a60d7fba80c0bc4ef09309f72e` 已推送，GitHub [CI #40324849098](https://github.com/DavisDing/Relay-Service/actions/runs/40324849098) 于 12:46:33 UTC 成功；Release/GHCR 发布与 NAS 部署尚未执行。工作区另有后续改动，不能由该提交的 CI 推断通过。需求基线 v1.4-draft 保持不变，本记录不把局部测试升级为完整产品验收。
 
 ## 1. 实际交付
 
@@ -10,7 +10,8 @@
 | `server/internal/monitor` | 六服务kind/HTTP/TCP、固定无推理端点、SSRF/私网授权、两个worker、周期与手动幂等检查、代际与中断隔离、分页历史、故障/恢复/受限事件、静默、设备独立已读 | WP-2，AC-25/32/38/46/60 的基础切片；端点证据和未验证服务见 COMPATIBILITY |
 | `server/internal/api` / `web/` | v1 API、初始化登录、服务增改暂停移除/阈值/凭据清除、历史/告警分页、配对设备、脱敏诊断、Cookie/Origin/CSRF与只读投影 | WP-3，AC-19/53/56/57/60 的基础页面/API |
 | `server/internal/storage` | PostgreSQL JSONB记录/计数表、原子短事务、data_version、显式迁移、schema匹配与数据库单活锁；内存Store仅用于测试 | WP-1/8；真实持久化与SQL权限/锁未实测 |
-| `cmd/relay` / `deploy/nas` | 启动/退出、live/ready、独立迁移命令、Dockerfile/Compose、角色初始化、随机秘密生成模板 | 源码构建部署资产；没有发布镜像/UGOS导入实测 |
+| `.github/` / `scripts/` | PR/main CI、tag Release、GHCR 双架构镜像、digest部署包/校验和、发布前验证 | 上述提交 CI 已通过；实际发布路径未执行 |
+| `cmd/relay` / `deploy/nas` | 启动/退出、live/ready、独立迁移/版本命令、Dockerfile/拉取镜像Compose/源码构建覆盖文件、角色初始化、随机秘密生成模板 | 部署资产；没有发布镜像/UGOS导入实测 |
 
 首期完整的账本、目录/余额、模型/路由写入、正文、付费探针/质量、通知投递、版本/digest更新、原生Mac/Android、灾备授权轮换均尚未实现。本版还没有自动历史/审计保留清理、容量限制和上游 Retry-After 退避，不建议作为已验收生产服务。
 
@@ -21,17 +22,23 @@
 | `cd server && env -u RELAY_TEST_DATABASE_URL go test -race ./...` | 通过 | access/api/config/monitor/storage/webui；本地HTTP fixture和内存Store，数据库集成测试显式跳过 |
 | `cd server && go vet ./...` | 通过 | 全部Go包静态检查 |
 | `cd server && go mod verify` | 通过 | 锁定模块校验；不是依赖零漏洞保证 |
-| `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false ... ./cmd/relay` | 通过 | 生成 Linux amd64 ELF；未在 Linux/容器运行 |
+| `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false ... ./cmd/relay`（另以 arm64 构建） | 通过 | 两个架构分别构建静态 ELF；本地未运行 Linux 产物 |
 | `cd web && pnpm install --frozen-lockfile && pnpm build` | 通过 | TypeScript检查与Vite编译，产物嵌入Go；非浏览器行为验收 |
 | `pnpm audit --prod` / 完整依赖审计 | 通过，0项已知命中 | 本轮锁文件/当时registry结果；不保证未来安全性 |
 | 编译页面与JS/CSS静态资源HTTP测试 | 通过 | 嵌入文件存在、Content/Cache策略、API/非法方法边界 |
+| 发布打包离线测试 | 通过，10项 | 合法/非法版本与摘要、输出拒覆盖、秘密/白名单、包结构、校验和、可重现、环境权限与摘要保留 |
+| 发布标签离线测试 | 通过 | Git fixture 验证标签与默认分支祖先、注解预发布标签及非法输入；非远端tag验证 |
+| `relay version` 与链接元数据 | 通过 | 本地命令无需数据库，默认/注入 version/revision/created JSON 可读 |
 | Shell语法、随机env生成/权限/拒绝覆盖 | 通过 | `sh -n`，临时路径验证600权限/64hex秘密/已有文件不改 |
 | Compose YAML解析与关键引用检查 | 通过 | Ruby YAML，核对latest、卷路径、角色环境和migration无profile；不是`docker compose config` |
 | `git diff --check` | 通过 | 文本空白检查 |
 | PostgreSQL库、DDL/授权、两pool并发、数据库锁、持久化/重启 | **未执行** | 用户明确选择跳过数据库实测；临时PG仅编译/启动后已停止，未创建业务角色/库、未迁移或运行应用 |
-| Docker build/run、`docker compose config`、UGOS Projects、真实六服务/网络/TLS | **未执行** | 当前没有Docker CLI/daemon和真实NAS访问；不能由交叉编译推断 |
+| Docker 镜像构建、`docker compose config`、amd64 容器基础检查 | 远端通过，本地未执行 | CI #40324849098 的对应步骤均成功；amd64 运行仅为版本/结构/无服务健康检查，arm64 只构建 |
+| UGOS Projects、真实六服务/网络/TLS | **未执行** | 没有真实 NAS 验收证据 |
 | 浏览器E2E | **未执行** | 浏览器连接临时内存fixture origin被自动审批拒绝（未获连接器origin授权）；已清理fixture进程/源码 |
-| 实际付费调用、NAS配置写入、旧应用改造、发布 | **未执行** | 不在本轮范围 |
+| GitHub Actions | 上述提交 CI 通过 | Web/Go/19项发布脚本测试、Compose、amd64容器检查、arm64构建；其他提交须单独核对 |
+| GHCR push、Release 资产上传/公开 | **未执行** | 已新增自动化；未创建发布标签，远端 Release 列表为空 |
+| 实际付费调用、NAS配置写入、旧应用改造 | **未执行** | 不在本轮范围 |
 
 ## 3. 工具与依赖
 
@@ -46,4 +53,4 @@
 
 数据库验证已提供显式可选测试：仅在专用名以`_test`结尾的空测试数据库设置`RELAY_TEST_DATABASE_URL`后运行`go test ./internal/storage -run Postgres -v`。测试使用随机schema，验证迁移幂等、回滚/版本、跨pool序号、leader和未知schema；默认跳过。运行角色/初始化脚本授权链仍需部署专项测试。
 
-Docker/NAS验证按DEPLOY执行并保存实际镜像digest、PG主版本、脚本/SQL结果、重启持久化、故障恢复/配对撤销、内存/磁盘/CPU与TLS记录。受控恢复授权代际轮换未实现前，不把旧库恢复直接当作安全生产流程。后续改动须继续区分代码、fixture、真实库、容器、NAS和客户端结果。
+发布流程和资产说明见 RELEASE.md。本地容器检查缺少 Docker CLI 时实际返回 77；远端已执行范围以上述 CI 提交为准。Docker/NAS完整验收按DEPLOY执行并保存实际镜像digest、PG主版本、脚本/SQL结果、重启持久化、故障恢复/配对撤销、内存/磁盘/CPU与TLS记录。受控恢复授权代际轮换未实现前，不把旧库恢复直接当作安全生产流程。后续改动须继续区分代码、fixture、真实库、容器、NAS和客户端结果。

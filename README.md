@@ -21,4 +21,4 @@ go vet ./...
 
 启动需要真实 PostgreSQL、独立角色与环境配置，按 NAS 部署文档显式迁移后运行；测试默认使用内存Store/本机HTTP fixture。数据库集成测试需专用 `_test` 数据库和显式 `RELAY_TEST_DATABASE_URL`，默认跳过。
 
-已配置 GitHub CI、GHCR 双架构镜像和带摘要的 NAS Release 部署包；首次远端执行和发布尚未完成。真实数据库、Docker/UGOS、浏览器与六服务安装版本尚未验收。workbuddy2api 安全检查合同与 MetaCubeXD 变体需核对，完整首期能力见需求文档，不能将本版视为全部完成。
+已配置 GitHub CI、GHCR 双架构镜像和带摘要的 NAS Release 部署包；提交 `3275bc9` 的远端 CI 已通过；版本发布状态见验证记录。真实数据库、Docker/UGOS、浏览器与六服务安装版本尚未验收。workbuddy2api 安全检查合同与 MetaCubeXD 变体需核对，完整首期能力见需求文档，不能将本版视为全部完成。
