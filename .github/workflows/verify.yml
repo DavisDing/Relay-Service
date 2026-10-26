@@ -106,13 +106,15 @@ jobs:
             VERSION=${{ inputs.version }}
             REVISION=${{ steps.source.outputs.commit }}
             CREATED=${{ steps.source.outputs.created }}
+      - name: Inspect the Linux arm64 binary without running it
+        run: python3 scripts/check-oci-architecture.py /tmp/relay-service-arm64.tar arm64
       - name: Record validation boundaries
         if: always()
         run: |
           {
             echo '### NAS delivery validation boundaries'
             echo '- Linux amd64: Docker build and container checks without PostgreSQL.'
-            echo '- Linux arm64: build only; no runtime or device acceptance.'
+            echo '- Linux arm64: build and ELF architecture check only; no runtime or device acceptance.'
             echo '- PostgreSQL integration: intentionally skipped; no test database is configured.'
             echo '- NAS, UGOS Projects, upstream services and browser/device acceptance remain separate.'
           } >> "$GITHUB_STEP_SUMMARY"

@@ -199,6 +199,6 @@ jobs:
             echo "### Published ${RELEASE_TAG}"
             echo "- Commit: ${RELEASE_COMMIT}"
             echo "- Image: ${PUBLISHED_IMAGE}"
-            echo '- amd64 passed container checks without a database; arm64 was built only.'
+            echo '- amd64 passed container checks without a database; arm64 passed build and static ELF checks only.'
             echo '- PostgreSQL, NAS/UGOS import, upstream services and devices were not accepted by this workflow.'
           } >> "$GITHUB_STEP_SUMMARY"

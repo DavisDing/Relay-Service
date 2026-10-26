@@ -102,5 +102,5 @@ jobs:
             echo "- Commit: $GITHUB_SHA"
             echo "- Checked image: $IMAGE@$PUBLISHED_DIGEST"
             echo '- latest follows verified main for self-testing; no stable GitHub Release was created.'
-            echo '- amd64 passed checks without a database; arm64 was built only. NAS acceptance remains separate.'
+            echo '- amd64 passed checks without a database; arm64 passed build and static ELF checks only. NAS acceptance remains separate.'
           } >> "$GITHUB_STEP_SUMMARY"

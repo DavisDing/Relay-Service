@@ -106,21 +106,29 @@ echo "PASS: healthcheck reports failure when no service is listening"
 # Export a stopped container, then inspect the archive without extracting it.
 task_container=$(docker create "$task_image" version)
 docker export "$task_container" > "$task_tmp/rootfs.tar"
-python3 - "$task_tmp/rootfs.tar" <<'PY'
+python3 - "$task_tmp/rootfs.tar" "$task_tmp/inspect.json" <<'PY'
+import json
+import struct
 import sys
 import tarfile
 
+image = json.load(open(sys.argv[2], encoding="utf-8"))[0]
+architecture = image["Architecture"]
+machine = {"amd64": 62, "arm64": 183}.get(architecture)
+assert machine is not None, f"unsupported image architecture {architecture}"
 with tarfile.open(sys.argv[1], "r:") as archive:
     members = {m.name.removeprefix("./"): m for m in archive.getmembers()}
     relay = members.get("relay")
     assert relay and relay.isfile() and relay.mode & 0o111, "missing executable /relay"
     data = archive.extractfile(relay).read()
     assert data[:4] == b"\x7fELF", "expected a Linux ELF executable"
+    assert data[4:6] == b"\x02\x01", "expected a 64-bit little-endian ELF executable"
+    assert struct.unpack("<H", data[18:20])[0] == machine, f"ELF architecture differs from image {architecture}"
     cert = members.get("etc/ssl/certs/ca-certificates.crt")
     assert cert and cert.isfile(), "missing HTTPS CA bundle"
     assert b"BEGIN CERTIFICATE" in archive.extractfile(cert).read(), "invalid CA bundle"
     assert "bin/sh" not in members, "scratch runtime unexpectedly includes a shell"
-    print("PASS: executable Linux binary, CA bundle and shell-free runtime")
+    print(f"PASS: executable Linux {architecture} binary, CA bundle and shell-free runtime")
 PY
 
 echo "PASS: database-free container smoke checks completed"

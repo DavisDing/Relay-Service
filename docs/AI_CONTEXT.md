@@ -61,6 +61,7 @@
 | Compose 入口 | `deploy/nas/`：`docker compose --env-file .env -f docker-compose.yaml config --quiet`，部署见 nas/DEPLOY.md | 远端 CI 已解析两种 Compose；本地 Docker 与 UGOS 尚未验证 |
 | 发布工具检查 | 根目录：`python3 -m unittest discover -s scripts -p 'test_*.py'`、`python3 -m unittest discover -s .github/scripts -p 'test_*.py'` | 离线包/标签合同，不触发发布 |
 | 容器基础检查 | 根目录：`sh scripts/container-smoke.sh --build` | 需现成 Docker CLI/daemon；不启动 PostgreSQL；不可用返回 77 |
+| ARM64 二进制静态检查 | 根目录：`python3 scripts/check-oci-architecture.py <OCI导出tar> arm64` | CI 导出镜像后核对 config 与实际 ELF 架构；不运行 ARM64 程序，不代表设备验收 |
 | 可选数据库测试 | `server/`：设置 `RELAY_TEST_DATABASE_URL` 后 `go test ./internal/storage -run Postgres` | 必须是专用 `_test` 数据库；默认跳过，用户本轮选择不执行 |
 
 已核实的核心限制：workbuddy2api 实际健康合同 NEEDS_CONFIRMATION；MetaCubeXD 纯静态与 all-in-one 能力不同；尚无自动保留清理/Retry-After、通知投递、账本/余额、正文、付费探针、镜像更新、灾备授权轮换或客户端。不可把历史成功缓存、网页可打开或fixture正常响应当成实时健康/全部验收。
