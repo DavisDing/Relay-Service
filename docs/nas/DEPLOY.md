@@ -2,14 +2,16 @@
 
 本轮交付 Go 服务端与已嵌入的 React 页面，以及新建 Relay 自有 PostgreSQL 的 Compose。属于 M1 基础监控切片；CI 已通过镜像构建及无数据库的 amd64 基础运行检查；真实数据库/权限/迁移、完整容器启动和 UGOS Projects 未验收。六服务的接口前提见 [COMPATIBILITY.md](../COMPATIBILITY.md)。调用 Key、模型路由写入、付费探针、账本余额、正文、原生客户端和镜像更新不在本轮代码范围。
 
-## 1. 准备发布包和配置
+## 1. 准备部署目录和配置
 
-发布流程提供 `relay-service-vX.Y.Z-nas.tar.gz`，完整解压到同一文件夹后即可使用；包内包含 `docker-compose.yaml`、`.env.example`、`generate-env.sh` 和 `init-db/001-roles.sh`，不需要 Go/Node 或源代码。默认 Compose 从 GHCR 拉取镜像，两项 Relay 服务共用 `RELAY_IMAGE`。发布模板填入该次构建的 `sha256` 摘要；源码模板只是占位，不能直接部署。
+当前自行测试默认使用 `ghcr.io/davisding/relay-service:latest`（REQUIREMENT D-16）。从本仓库取完整 `deploy/nas/` 目录，保留 `docker-compose.yaml`、`.env.example`、`generate-env.sh` 和 `init-db/001-roles.sh`；直接拉取镜像无需安装 Go/Node。源码 Compose 和环境模板默认使用 `latest`，运行与迁移两项 Relay 服务共用 `RELAY_IMAGE`。`main` 通过 CI 后才更新该测试标签；稳定后才发布正式版。
+
+版本发布流程另提供 `relay-service-vX.Y.Z-nas.tar.gz`，完整解压到同一文件夹后即可使用。版本包内环境模板固定该次构建的 `sha256` 摘要，不随测试渠道更新。已有版本包若希望跟随 `latest`，仅将现有 `.env` 的 `RELAY_IMAGE` 改为 `ghcr.io/davisding/relay-service:latest`，保留原秘密，然后按第 4 节升级；不要重新生成并替换已有数据库密码或加密主密钥。
 
 GitHub Release 另附 `docker-compose.yaml`、版本化环境模板、`release-metadata.json` 和 `SHA256SUMS`。单独下载 YAML 仍缺少初始化脚本，应使用完整压缩包。已发布 [v0.1.0-alpha.1](https://github.com/DavisDing/Relay-Service/releases/tag/v0.1.0-alpha.1)，包含完整 NAS 包和 GHCR 双架构镜像；自动化配置见 [RELEASE.md](RELEASE.md)。
 
 ```sh
-# 在解压后的包目录
+# 在 deploy/nas/ 或解压后的完整包目录
 sh generate-env.sh .env
 ```
 
@@ -17,7 +19,7 @@ sh generate-env.sh .env
 
 | 变量 | 用途 |
 |---|---|
-| `RELAY_IMAGE` | 本次 Release 的 GHCR 镜像摘要，运行与迁移使用同一镜像 |
+| `RELAY_IMAGE` | 自行测试默认 `ghcr.io/davisding/relay-service:latest`；版本包默认对应 digest，运行与迁移使用同一镜像 |
 | `POSTGRES_SUPERUSER_PASSWORD` | 此独立 PostgreSQL 的初始超级用户口令 |
 | `RELAY_DB_PASSWORD` | `relay_owner` 数据库所有者，常规 Relay 进程不使用 |
 | `RELAY_MIGRATOR_PASSWORD` | 显式迁移使用；常规容器不注入 |
@@ -32,7 +34,7 @@ Relay 不挂载 Docker socket、其他容器目录或数据卷。PostgreSQL 仅�
 
 ## 2. 拉取和启动
 
-在完整发布包目录执行：
+在完整部署目录执行：
 
 ```sh
 docker compose --env-file .env -f docker-compose.yaml config --quiet
@@ -42,7 +44,7 @@ docker compose --env-file .env -f docker-compose.yaml up -d
 
 首次顺序为 PostgreSQL 健康 → `relay-migrate` 一次性显式迁移成功 → `relay` 启动。schema 不匹配、库不可用、已有活动 Relay 或迁移失败会阻止启动。一个数据库只允许一个 Relay 进程持有调度锁；不构成自动 HA。
 
-UGREEN Docker Projects 导入 `docker-compose.yaml` 时必须保留同目录 `.env` 和 `init-db/001-roles.sh`，并配置既有外部网络。v0.1.0-alpha.1 的 GHCR digest 已核实支持匿名 manifest 拉取，NAS 仍须具备到 GHCR 的网络访问。未来私有包需要部署者预先认证。GUI 的依赖条件和环境文件处理尚未实测；不以文件可导入代替实际验收。
+UGREEN Docker Projects 导入 `docker-compose.yaml` 时必须保留同目录 `.env` 和 `init-db/001-roles.sh`，并配置既有外部网络。v0.1.0-alpha.1 的 GHCR digest 已核实支持匿名 manifest 拉取；预发布版本号不会阻止 Docker 拉取。`latest` 的可用性取决于测试发布工作流是否成功，NAS 仍须具备到 GHCR 的网络访问。未来私有包需要部署者预先认证。GUI 的依赖条件和环境文件处理尚未实测；不以文件可导入代替实际验收。
 
 需要从源代码构建时，在仓库 `deploy/nas/` 使用独立覆盖文件：
 
@@ -74,14 +76,14 @@ docker compose --env-file .env -f docker-compose.yaml -f docker-compose.local-bu
 
 保留用户选择的 `postgres:latest`；18+ 官方镜像使用命名卷挂到 `/var/lib/postgresql`。实际镜像 digest/主版本需由部署者记录。主版本升级需要 PostgreSQL 正式迁移，不能把换镜像视为自动完成；本地 PostgreSQL 源码构建不证明该镜像兼容。
 
-后续 Relay schema 升级必须先备份并停常规进程，将现有 `.env` 中 `RELAY_IMAGE` 改为新 Release 摘要（保留秘密），再显式迁移。以下命令在同一部署目录执行，Compose 自动读取 `.env`；不要在升级 Relay 时顺带更新 PostgreSQL：
+更新 Relay 必须先备份并停常规进程，再显式迁移。跟随测试渠道时，保留 `.env` 的 `RELAY_IMAGE=ghcr.io/davisding/relay-service:latest`；固定版本升级则改为新 Release 摘要，均保留原秘密。`docker compose pull` 只下载镜像，需要重建 Relay 才会使用新版本。以下命令在同一部署目录执行，Compose 自动读取 `.env`；两项 Relay 服务共用本机已拉取的镜像，后续步骤不再次拉取；不要在升级 Relay 时顺带更新 PostgreSQL：
 
 ```sh
 docker compose stop relay
-docker compose pull relay relay-migrate
-docker compose up -d postgres
-docker compose run --rm relay-migrate
-docker compose up -d --no-deps relay
+docker compose pull relay
+docker compose up -d --pull never postgres
+docker compose run --rm --pull never relay-migrate
+docker compose up -d --pull never --no-deps --force-recreate relay
 ```
 
 迁移失败应保留停止状态，查看脱敏日志、核对版本后处理；不要自动降级镜像或删卷。常规运行角色只能写业务表，迁移账本只读。启动与迁移共享同一数据库锁，未知/超前/不连续 migration history 会拒绝。

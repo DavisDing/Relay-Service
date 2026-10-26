@@ -180,16 +180,33 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertEqual(generated.read_bytes(), original)
 
     @unittest.skipUnless(shutil.which('openssl'), 'openssl required for secret generation')
-    def test_source_template_requires_explicit_local_image(self):
+    def test_source_template_defaults_to_latest_and_supports_image_overrides(self):
         script = self.root / 'deploy/nas/generate-env.sh'
-        result = subprocess.run(['sh', str(script), str(self.folder / '.env')], cwd=self.folder,
-                                env=dict(self.env, RELAY_IMAGE=''), capture_output=True, text=True)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertFalse((self.folder / '.env').exists())
-        result = subprocess.run(['sh', str(script), str(self.folder / '.env')], cwd=self.folder,
-                                env=dict(self.env, RELAY_IMAGE='relay-service:local'), capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('RELAY_IMAGE=relay-service:local', (self.folder / '.env').read_text())
+        for index, override in enumerate(('', 'relay-service:local', IMAGE)):
+            with self.subTest(override=override):
+                target = self.folder / f'source-{index}.env'
+                result = subprocess.run(['sh', str(script), str(target)], cwd=self.folder,
+                                        env=dict(self.env, RELAY_IMAGE=override), capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                expected = override or 'ghcr.io/davisding/relay-service:latest'
+                self.assertIn('RELAY_IMAGE=' + expected + '\n', target.read_text())
+                self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
+
+    @unittest.skipUnless(shutil.which('openssl'), 'openssl required for secret generation')
+    def test_source_template_refuses_invalid_image_before_creating_env(self):
+        script = self.root / 'deploy/nas/generate-env.sh'
+        for override in ('ghcr.io/other/relay-service:latest', IMAGE + '\n',
+                         'ghcr.io/davisding/relay-service@sha256:bad'):
+            with self.subTest(override=override):
+                target = self.folder / 'invalid.env'
+                result = subprocess.run(['sh', str(script), str(target)], cwd=self.folder,
+                                        env=dict(self.env, RELAY_IMAGE=override), capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(target.exists())
+
+    def test_source_compose_defaults_both_relay_services_to_latest(self):
+        compose = (ROOT / 'deploy/nas/docker-compose.yaml').read_text()
+        self.assertEqual(compose.count('image: ${RELAY_IMAGE:-ghcr.io/davisding/relay-service:latest}'), 2)
 
     def test_bundle_is_reproducible(self):
         self.assertEqual(self.package().returncode, 0)

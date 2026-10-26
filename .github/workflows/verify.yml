@@ -69,9 +69,10 @@ jobs:
         run: |
           task_dir=$(mktemp -d)
           trap 'rm -rf "$task_dir"' EXIT
-          RELAY_IMAGE=relay-service:local sh deploy/nas/generate-env.sh "$task_dir/.env"
+          sh deploy/nas/generate-env.sh "$task_dir/.env"
           docker compose --env-file "$task_dir/.env" -f deploy/nas/docker-compose.yaml config --quiet
-          docker compose --env-file "$task_dir/.env" -f deploy/nas/docker-compose.yaml \
+          RELAY_IMAGE=relay-service:local sh deploy/nas/generate-env.sh "$task_dir/local.env"
+          docker compose --env-file "$task_dir/local.env" -f deploy/nas/docker-compose.yaml \
             -f deploy/nas/docker-compose.local-build.yaml config --quiet
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0

@@ -14,7 +14,7 @@
 
 - 已确认的技术方向：NAS Relay 服务端采用 Go（REQUIREMENT D-15，2026-10-26）。代码采用标准库 net/http、context、embed，PostgreSQL/pgx、Argon2id、AES-GCM；固定端点检查不发推理请求，监控凭据不回显。
 - 锁定依赖：`server/go.mod`/`go.sum`（Go 1.27，pgx/v5 5.11.0、x/crypto 0.58.0）；`web/package.json`/`pnpm-lock.yaml`（React 19.2.0、TypeScript 5.9.3、Vite 7.3.7）。Docker builder Node 22.23.4/Go 1.27.3、pnpm 11.25.0、CGO=0；根上下文的多阶段构建先生成页面再嵌入 Go，最终 scratch/非 root，包含 CA；本地生成页面在 `internal/webui/dist`。工具链需安装后按下面入口验证，不假设主机 PATH 已具备。
-- 环境配置：`deploy/nas/` 提供 Dockerfile、Compose、`.env.example`、秘密生成脚本和全新独立库初始化脚本；不包含实际 `.env`/秘密。保留用户选择的 PostgreSQL latest，18+ 卷挂载 `/var/lib/postgresql`。默认 Compose 拉取 `RELAY_IMAGE`，Release 包绑定实际构建摘要；另有源码构建覆盖文件。已配置 CI、GHCR 和 Release 工作流；已发布 v0.1.0-alpha.1，默认交付带摘要的 NAS 包及 amd64/arm64 镜像。发布与验证证据见 nas/VALIDATION.md；未通过数据库/UGOS 完整验收。历史 NAS 配置附件仍未归档。
+- 环境配置：`deploy/nas/` 提供 Dockerfile、Compose、`.env.example`、秘密生成脚本和全新独立库初始化脚本；不包含实际 `.env`/秘密。保留用户选择的 PostgreSQL latest，18+ 卷挂载 `/var/lib/postgresql`。按 REQUIREMENT D-16，当前自行测试的源码 Compose/模板默认 `ghcr.io/davisding/relay-service:latest`；CI 配置为本仓库 main 验证成功后发布双架构提交镜像，按 digest 完成 amd64 基础检查后更新 latest，PR/fork 不发包。稳定后才发布正式版；版本 Release 包继续绑定实际构建摘要，另有源码构建覆盖文件。已发布 v0.1.0-alpha.1 预发布及带摘要 NAS 包；测试渠道本次是否已更新须查对应工作流/registry，不以配置存在代替发布证据。发布与验证证据见 nas/VALIDATION.md；未通过数据库/UGOS 完整验收。历史 NAS 配置附件仍未归档。
 - 用户已补充 UGOS PRO 公开最新版本、Docker 部署、LiteLLM 最新版本/默认启动和权限/DB 未启用、M 系列 Mac/非 App Store 分发；此前 Compose/模型映射已经提供，Lucky 由用户自行配置。作为用户报告记录，不虚构版本号或在线验证结果；不再索要 NAS 工作目录/备份目标/Lucky 配置，见 REQUIREMENT 2.3/2.4。
 - 不存储真实密码、Key、管理令牌、账户个人信息或真实 NAS 数据。需要证据时使用脱敏配置、固定版本与验证记录。
 

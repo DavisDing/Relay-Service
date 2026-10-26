@@ -4,7 +4,7 @@
 
 ## 1. 触发和检查
 
-- `ci.yml`：PR、main 推送与手动触发，复用 `verify.yml`；只读仓库，不推送镜像。
+- `ci.yml`：PR、main 推送与手动触发，复用 `verify.yml`。仅本仓库 `main` 推送或在 `main` 手动运行且验证成功后，发布测试镜像；PR、其他分支和 fork 不发包。
 - `verify.yml`：锁文件构建 Web、Go 模块校验/竞态测试/vet、标签与打包离线测试、Compose 解析、amd64 镜像构建及无数据库容器检查、arm64 镜像构建。
 - `release.yml`：推送已有 `vX.Y.Z` 或 `vX.Y.Z-rc.1` 等标签，或手动输入同样的已有标签。标签必须指向默认分支历史中的提交；非法标签和其他仓库在发布前拒绝。
 
@@ -16,7 +16,9 @@ Release 复用同一验证流程，通过后才授权发布 job 写入 Packages/
 
 发布 job 先拒绝覆盖已公开的同名 Release，确认标签提交，构建并推送 `ghcr.io/davisding/relay-service:vX.Y.Z`，包含 linux/amd64 与 linux/arm64。推送后按返回的 digest 拉取 amd64 再检查，随后使用同一 digest 打包部署资产；arm64 只完成构建，未运行验收。
 
-不维护 `latest` 标签；部署和升级使用版本对应的 digest。含 `-alpha.1`/`-rc.1` 的标签标为 GitHub prerelease。首个开发预览已采用 `v0.1.0-alpha.1`，不标记为稳定正式版。
+按 REQUIREMENT D-16，当前自行测试默认使用 `ghcr.io/davisding/relay-service:latest`。CI 先以 `sha-<完整提交 SHA>` 发布双架构镜像，对已推送 digest 执行 amd64 无数据库容器检查，成功后再让 `latest` 指向同一 digest。检查失败不更新 `latest`；是否成功发布以该次工作流和 registry 结果为准。测试发布只更新 Packages，不创建 GitHub Release。`latest` 是滚动测试入口，稳定后才发正式版。
+
+版本 Release 仍使用独立版本标签和不可变 digest，包内模板保留对应 digest，便于复现。含 `-alpha.1`/`-rc.1` 的标签标为 GitHub prerelease。现有 `v0.1.0-alpha.1` 预发布及资产保留，不因默认测试入口改为 `latest` 而改名或覆盖。版本发布不会改变测试渠道 `latest` 的指向。
 
 所有资产先上传到 draft，上传和摘要校验成功后才公开 Release。相同标签已有公开 Release 会拒绝覆盖；draft 只允许相同源码提交重试。镜像发布与 Release API 不能组成事务，后续失败可能留下已推送镜像或 draft；应检查失败 job 和标签身份后重试，不把残留 Packages 当完整发布。
 
@@ -41,7 +43,7 @@ git tag vX.Y.Z-rc.1 <已通过CI的完整提交SHA>
 git push origin refs/tags/vX.Y.Z-rc.1
 ```
 
-需要仓库启用 Actions，内置 `GITHUB_TOKEN` 对发布 job 获得 `contents: write` 和 `packages: write`。不需要将长期个人令牌写入仓库。若同名 GHCR 包已有不同权限设置，需在该包设置中授予此仓库访问；首次发布后核对 Packages 可见性和 NAS 拉取权限。公开源码仓库不作为已验证匿名镜像拉取的证据。
+需要仓库启用 Actions。内置 `GITHUB_TOKEN` 对测试镜像发布 job 获得 `contents: read`、`packages: write`，对版本 Release 发布 job 获得 `contents: write`、`packages: write`。不需要将长期个人令牌写入仓库。若同名 GHCR 包已有不同权限设置，需在该包设置中授予此仓库访问；首次发布后核对 Packages 可见性和 NAS 拉取权限。公开源码仓库不作为已验证匿名镜像拉取的证据。
 
 Release 页面显示、全部五项资产可下载、metadata/Compose/template 指向相同 digest，以及 `docker buildx imagetools inspect 镜像@sha256:摘要` 的架构结果均应按实际发布提交核对。CI 成功仍不能替代 NAS Projects、PostgreSQL、真实服务与浏览器/设备验收。
 

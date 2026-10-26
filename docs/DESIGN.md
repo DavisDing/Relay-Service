@@ -39,7 +39,7 @@ NAS Relay 服务端采用 Go；推荐模块化单体（API、静态 Web、采集
 
 ### 0.4 本轮已实现的 NAS 监控切片（2026-10-26）
 
-用户授权先实现 NAS Docker 端并行开发。当前源码使用 Go net/http/pgx 与嵌入式 React/TypeScript；依赖精确版本以 go.mod/go.sum、package.json/pnpm-lock.yaml 为准。Docker 从锁文件构建 Web 再嵌入 Go；默认 Compose 拉取发布摘要镜像，并另附源码构建覆盖文件。已配置 CI、GHCR/Release 和 NAS 部署包，尚未执行远端发布；不是已发布镜像。
+用户授权先实现 NAS Docker 端并行开发。当前源码使用 Go net/http/pgx 与嵌入式 React/TypeScript；依赖精确版本以 go.mod/go.sum、package.json/pnpm-lock.yaml 为准。Docker 从锁文件构建 Web 再嵌入 Go；按 REQUIREMENT D-16，自行测试的源码 Compose/模板默认拉取 `ghcr.io/davisding/relay-service:latest`，本仓库 main 验证成功后由 CI 发布双架构提交镜像，通过已推送 digest 的 amd64 无数据库检查才更新 latest。稳定后才发布正式版；版本 Release 包仍绑定固定摘要，另附源码构建覆盖文件。已有 v0.1.0-alpha.1 预发布，证据与边界见 nas/VALIDATION.md；本次 latest 是否已更新须核对工作流和 registry。
 
 | 已编码部分 | 对应范围与验证限制 |
 |---|---|

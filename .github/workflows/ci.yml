@@ -18,4 +18,89 @@ jobs:
     uses: ./.github/workflows/verify.yml
     with:
       source-ref: ${{ github.sha }}
-      version: dev
+      version: dev-${{ github.sha }}
+
+  publish-latest:
+    name: Publish the verified main build for self-testing
+    needs: verify
+    if: >-
+      github.repository == 'DavisDing/Relay-Service' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      IMAGE: ghcr.io/davisding/relay-service
+      IMAGE_VERSION: dev-${{ github.sha }}
+      DOCKER_BUILD_SUMMARY: "false"
+      DOCKER_BUILD_RECORD_UPLOAD: "false"
+    steps:
+      - name: Check out the exact verified source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Refuse an outdated main build
+        run: |
+          current=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          test "$current" = "$GITHUB_SHA" || {
+            echo '::error::main has advanced; latest must be published by the newer CI run.'
+            exit 1
+          }
+      - name: Resolve the verified source timestamp
+        id: source
+        run: echo "created=$(git show -s --format=%cI HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+      - name: Authenticate to GitHub Container Registry
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Publish the verified source with its commit tag
+        id: image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/nas/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/davisding/relay-service:sha-${{ github.sha }}
+          build-args: |
+            VERSION=${{ env.IMAGE_VERSION }}
+            REVISION=${{ github.sha }}
+            CREATED=${{ steps.source.outputs.created }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ env.IMAGE_VERSION }}
+      - name: Check the published amd64 digest without a database
+        env:
+          PUBLISHED_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          docker pull --platform linux/amd64 "$IMAGE@$PUBLISHED_DIGEST"
+          sh scripts/container-smoke.sh "$IMAGE@$PUBLISHED_DIGEST" "$IMAGE_VERSION" "$GITHUB_SHA"
+      - name: Promote the checked digest to latest
+        env:
+          PUBLISHED_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          current=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          test "$current" = "$GITHUB_SHA" || {
+            echo '::error::main has advanced; refusing to move latest to an outdated build.'
+            exit 1
+          }
+          docker buildx imagetools create --tag "$IMAGE:latest" "$IMAGE@$PUBLISHED_DIGEST"
+          docker buildx imagetools inspect "$IMAGE:latest"
+          {
+            echo '### Self-testing image published'
+            echo "- Pull: docker pull $IMAGE:latest"
+            echo "- Commit: $GITHUB_SHA"
+            echo "- Checked image: $IMAGE@$PUBLISHED_DIGEST"
+            echo '- latest follows verified main for self-testing; no stable GitHub Release was created.'
+            echo '- amd64 passed checks without a database; arm64 was built only. NAS acceptance remains separate.'
+          } >> "$GITHUB_STEP_SUMMARY"

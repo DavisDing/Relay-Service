@@ -2,6 +2,14 @@
 
 NAS 服务端与 Web 运维控制台，采用 Go + PostgreSQL + React/TypeScript。当前为 M1 基础监控开发预览：管理员/只读设备、服务检查、历史、故障/恢复事件、静默与已读位置。
 
+当前用于自行测试，Docker 默认使用 `ghcr.io/davisding/relay-service:latest`。`main` 通过 CI 和镜像基础检查后更新该标签；它代表最新测试构建，稳定后才发布正式版。
+
+```sh
+docker pull ghcr.io/davisding/relay-service:latest
+```
+
+拉取镜像后，按 [NAS 部署指引](docs/nas/DEPLOY.md) 配置数据库、秘密与迁移；仅执行 `docker pull` 不会更新已运行的容器。
+
 - [项目现状与验证入口](docs/AI_CONTEXT.md)
 - [需求与设计](docs/README.md)
 - [NAS 镜像/Compose 部署](docs/nas/DEPLOY.md)

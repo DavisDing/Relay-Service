@@ -29,8 +29,9 @@ for secret_name in POSTGRES_SUPERUSER_PASSWORD RELAY_DB_PASSWORD RELAY_MIGRATOR_
   fi
 done
 image=$(sed -n 's/^RELAY_IMAGE=//p' "$template")
-# Only an unreleased source template can opt into a local-build image override.
+# The source template permits an override; a versioned bundle keeps its digest.
 case "$image" in
+  ghcr.io/davisding/relay-service:latest) image=${RELAY_IMAGE:-$image} ;;
   *replace-with-release-digest) image=${RELAY_IMAGE:-} ;;
 esac
 case "$image" in
@@ -39,8 +40,8 @@ case "$image" in
     case "$digest" in *[!0-9a-f]*|'') echo "Release image digest is invalid" >&2; exit 1 ;; esac
     if [ "${#digest}" != 64 ]; then echo "Release image digest must have 64 hex characters" >&2; exit 1; fi
     ;;
-  relay-service:local) ;;
-  *) echo "Use a published release template with an image digest; source builds may set RELAY_IMAGE=relay-service:local" >&2; exit 1 ;;
+  ghcr.io/davisding/relay-service:latest|relay-service:local) ;;
+  *) echo "Use Relay's latest image or a published digest; source builds may set RELAY_IMAGE=relay-service:local" >&2; exit 1 ;;
 esac
 command -v openssl >/dev/null 2>&1 || {
   echo "openssl is required to generate random deployment secrets" >&2

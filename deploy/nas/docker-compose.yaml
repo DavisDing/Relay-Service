@@ -1,7 +1,7 @@
 name: relay-service
 services:
   relay-migrate:
-    image: ${RELAY_IMAGE:?set RELAY_IMAGE to the release image digest}
+    image: ${RELAY_IMAGE:-ghcr.io/davisding/relay-service:latest}
     command: ["migrate"]
     restart: "no"
     user: "65532:65532"
@@ -14,7 +14,7 @@ services:
       - relay-backend
 
   relay:
-    image: ${RELAY_IMAGE:?set RELAY_IMAGE to the release image digest}
+    image: ${RELAY_IMAGE:-ghcr.io/davisding/relay-service:latest}
     container_name: relay-service
     restart: unless-stopped
     init: true

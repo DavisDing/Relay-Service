@@ -51,8 +51,12 @@ for name, (relative, mode) in allowlist.items():
 compose = payload['docker-compose.yaml'][0].decode('utf-8')
 if re.search(r'^\s*build\s*:', compose, re.MULTILINE):
     sys.exit('Default release Compose must not require source builds')
-if compose.count('${RELAY_IMAGE:?') != 2:
-    sys.exit('Both Relay services must require RELAY_IMAGE')
+source_image = '${RELAY_IMAGE:-ghcr.io/davisding/relay-service:latest}'
+if compose.count(source_image) != 2:
+    sys.exit('Both source Relay services must default to the self-testing latest image')
+# Versioned assets remain reproducible even while the source defaults to latest.
+compose = compose.replace(source_image, '${RELAY_IMAGE:?set RELAY_IMAGE to the release image digest}')
+payload['docker-compose.yaml'] = (compose.encode(), 0o644)
 if 'image: postgres:latest' not in compose:
     sys.exit('The confirmed PostgreSQL latest policy must be preserved')
 
