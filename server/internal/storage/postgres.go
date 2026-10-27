@@ -340,7 +340,10 @@ func (t *postgresTx) Count(bucket string, options CountOptions) (int64, error) {
 		args = append(args, options.Prefix)
 		n++
 	}
-	query += fmt.Sprintf(" AND NULLIF(value->>'%s','') IS NOT NULL AND (value->>'%s')::timestamptz < $%d", options.TimeField, options.TimeField, n)
+	// Keep the SQL predicate aligned with Go's time.Time.IsZero semantics.
+	// time.Time{} is serialized as 0001-01-01T00:00:00Z, so IS NOT NULL alone
+	// would count records that expiredCheck intentionally leaves in place.
+	query += fmt.Sprintf(" AND NULLIF(value->>'%s','') IS NOT NULL AND (NULLIF(value->>'%s',''))::timestamptz <> TIMESTAMPTZ '0001-01-01 00:00:00+00' AND (NULLIF(value->>'%s',''))::timestamptz < $%d", options.TimeField, options.TimeField, options.TimeField, n)
 	args = append(args, options.Before)
 	n++
 	for _, excluded := range options.ExcludeStatuses {
@@ -350,7 +353,7 @@ func (t *postgresTx) Count(bucket string, options CountOptions) (int64, error) {
 	}
 	var total int64
 	if err := t.tx.QueryRow(t.ctx, query, args...).Scan(&total); err != nil {
-		return 0, fmt.Errorf("count %s records: %w", bucket, err)
+		return 0, fmt.Errorf("count records: %w", err)
 	}
 	return total, nil
 }

@@ -194,7 +194,7 @@ func (t *memoryTx) Count(bucket string, options CountOptions) (int64, error) {
 			return 0, err
 		}
 		var at time.Time
-		if value, ok := fields[options.TimeField]; !ok || json.Unmarshal(value, &at) != nil || !at.Before(options.Before) {
+		if value, ok := fields[options.TimeField]; !ok || json.Unmarshal(value, &at) != nil || at.IsZero() || !at.Before(options.Before) {
 			continue
 		}
 		if options.StatusField != "" {
