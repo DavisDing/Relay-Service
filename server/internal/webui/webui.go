@@ -2,21 +2,23 @@
 package webui
 
 import (
-	"embed"
 	"io/fs"
 	"net/http"
 	"strings"
 )
 
-//go:embed dist/*
-var assets embed.FS
-
 func Handler() http.Handler {
-	root, err := fs.Sub(assets, "dist")
-	if err != nil {
-		panic(err)
+	var files http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		http.Error(w, "Web UI unavailable: build web assets, then rebuild with -tags webassets", http.StatusServiceUnavailable)
+	})
+	if assets != nil {
+		root, err := fs.Sub(assets, "dist")
+		if err != nil {
+			panic(err)
+		}
+		files = http.FileServer(http.FS(root))
 	}
-	files := http.FileServer(http.FS(root))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/health/") {
 			http.NotFound(w, r)

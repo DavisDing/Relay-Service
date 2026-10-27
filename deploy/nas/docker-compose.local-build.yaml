@@ -1,10 +1,5 @@
 # Source checkout only. The release bundle uses docker-compose.yaml alone.
 services:
-  relay-migrate:
-    image: ${RELAY_IMAGE:-relay-service:local}
-    build:
-      context: ../..
-      dockerfile: deploy/nas/Dockerfile
   relay:
     image: ${RELAY_IMAGE:-relay-service:local}
     build:

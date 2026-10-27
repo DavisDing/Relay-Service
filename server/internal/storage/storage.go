@@ -11,6 +11,7 @@ import (
 
 var ErrNotFound = errors.New("record not found")
 var ErrReadOnly = errors.New("read-only storage transaction")
+var ErrSchemaNotReady = errors.New("database schema requires initialization")
 
 type Record struct {
 	Key   string

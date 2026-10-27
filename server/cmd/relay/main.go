@@ -89,20 +89,25 @@ func run() error {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level(cfg.LogLevel)})))
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
-	connectCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	connectCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 	db, err := storage.OpenPostgres(connectCtx, cfg.DatabaseURL, 8)
 	if err != nil {
 		return fmt.Errorf("connect Relay database: %w", err)
 	}
 	defer db.Close()
+	if err := prepareSchema(connectCtx, db, cfg.MigrationDatabaseURL, func(ctx context.Context, databaseURL string) (schemaMigrator, error) {
+		return storage.OpenPostgres(ctx, databaseURL, 2)
+	}); err != nil {
+		return err
+	}
 	leader, err := db.AcquireLeadership(connectCtx)
 	if err != nil {
 		return fmt.Errorf("acquire scheduler leadership: %w", err)
 	}
 	defer leader.Close()
 	if err := db.Ping(connectCtx); err != nil {
-		return fmt.Errorf("check Relay schema; run the deployment migration command first: %w", err)
+		return fmt.Errorf("verify Relay schema before serving: %w", err)
 	}
 	if cfg.BootstrapToken == "" {
 		slog.Warn("administrator bootstrap is disabled")

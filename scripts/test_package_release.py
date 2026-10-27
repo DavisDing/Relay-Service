@@ -81,7 +81,15 @@ class PackageReleaseTests(unittest.TestCase):
                           'init-db/001-roles.sh', 'README.txt'})
         compose = (nas / 'docker-compose.yaml').read_text()
         self.assertNotRegex(compose, r'(?m)^\s*build\s*:')
-        self.assertEqual(compose.count('${RELAY_IMAGE:?'), 2)
+        self.assertEqual(compose.count('${RELAY_IMAGE:?'), 1)
+        self.assertNotIn('relay-migrate:', compose)
+        relay_section = compose.split('  relay:\n', 1)[1].split('  postgres:\n', 1)[0]
+        self.assertIn('RELAY_DATABASE_URL: postgres://relay_app:', relay_section)
+        self.assertIn('RELAY_MIGRATION_DATABASE_URL: postgres://relay_migrator:', relay_section)
+        self.assertNotIn('command: ["migrate"]', relay_section)
+        self.assertNotIn('service_completed_successfully', compose)
+        self.assertNotIn('docker-compose.init.yaml', (nas / 'README.txt').read_text())
+        self.assertIn('automatically applies only pending SQL files', (nas / 'README.txt').read_text())
         self.assertIn('image: postgres:latest', compose)
         self.assertIn('relay-postgres:/var/lib/postgresql', compose)
         self.assertIn('./init-db/001-roles.sh:', compose)
@@ -204,9 +212,9 @@ class PackageReleaseTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse(target.exists())
 
-    def test_source_compose_defaults_both_relay_services_to_latest(self):
+    def test_source_compose_defaults_relay_service_to_latest(self):
         compose = (ROOT / 'deploy/nas/docker-compose.yaml').read_text()
-        self.assertEqual(compose.count('image: ${RELAY_IMAGE:-ghcr.io/davisding/relay-service:latest}'), 2)
+        self.assertEqual(compose.count('image: ${RELAY_IMAGE:-ghcr.io/davisding/relay-service:latest}'), 1)
 
     def test_bundle_is_reproducible(self):
         self.assertEqual(self.package().returncode, 0)
@@ -217,9 +225,9 @@ class PackageReleaseTests(unittest.TestCase):
 
     def test_local_build_overlay_uses_repository_root(self):
         overlay = (ROOT / 'deploy/nas/docker-compose.local-build.yaml').read_text()
-        self.assertEqual(overlay.count('context: ../..'), 2)
-        self.assertEqual(overlay.count('dockerfile: deploy/nas/Dockerfile'), 2)
-        self.assertEqual(overlay.count('image: ${RELAY_IMAGE:-relay-service:local}'), 2)
+        self.assertEqual(overlay.count('context: ../..'), 1)
+        self.assertEqual(overlay.count('dockerfile: deploy/nas/Dockerfile'), 1)
+        self.assertEqual(overlay.count('image: ${RELAY_IMAGE:-relay-service:local}'), 1)
 
 
 if __name__ == '__main__':

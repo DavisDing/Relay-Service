@@ -12,13 +12,14 @@ import (
 )
 
 type Config struct {
-	ListenAddr     string
-	PublicURL      string
-	DatabaseURL    string
-	EncryptionKey  []byte
-	BootstrapToken string
-	SecureCookies  bool
-	LogLevel       string
+	ListenAddr           string
+	PublicURL            string
+	DatabaseURL          string
+	MigrationDatabaseURL string
+	EncryptionKey        []byte
+	BootstrapToken       string
+	SecureCookies        bool
+	LogLevel             string
 }
 
 func Load() (Config, error) { return LoadWith(os.Getenv) }
@@ -60,6 +61,12 @@ func LoadWith(getenv func(string) string) (Config, error) {
 	if err := ValidateDatabaseURL(c.DatabaseURL); err != nil {
 		return c, err
 	}
+	c.MigrationDatabaseURL = getenv("RELAY_MIGRATION_DATABASE_URL")
+	if c.MigrationDatabaseURL != "" {
+		if err := validateMigrationDatabaseURL(c.DatabaseURL, c.MigrationDatabaseURL); err != nil {
+			return c, err
+		}
+	}
 	key, err := hex.DecodeString(getenv("RELAY_ENCRYPTION_KEY"))
 	if err != nil || len(key) != 32 {
 		return c, fmt.Errorf("RELAY_ENCRYPTION_KEY must contain 64 hexadecimal characters")
@@ -85,6 +92,26 @@ func ValidateDatabaseURL(raw string) error {
 	}
 	if u.Path == "/postgres" || u.Path == "/template0" || u.Path == "/template1" {
 		return fmt.Errorf("RELAY_DATABASE_URL must use a dedicated Relay database")
+	}
+	return nil
+}
+
+// Startup schema changes and business queries must target the same database
+// and schema. Credentials may differ; connection options must match.
+func validateMigrationDatabaseURL(application, migration string) error {
+	if err := ValidateDatabaseURL(migration); err != nil {
+		return fmt.Errorf("RELAY_MIGRATION_DATABASE_URL must be a PostgreSQL URL with a dedicated database")
+	}
+	app, _ := url.Parse(application) // Already validated by LoadWith.
+	setup, _ := url.Parse(migration)
+	port := func(u *url.URL) string {
+		if value := u.Port(); value != "" {
+			return value
+		}
+		return "5432"
+	}
+	if !strings.EqualFold(app.Hostname(), setup.Hostname()) || port(app) != port(setup) || app.Path != setup.Path || app.Query().Encode() != setup.Query().Encode() {
+		return fmt.Errorf("RELAY_MIGRATION_DATABASE_URL must match RELAY_DATABASE_URL host, port, database and connection options")
 	}
 	return nil
 }

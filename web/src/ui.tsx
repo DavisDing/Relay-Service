@@ -24,6 +24,8 @@ const paths = {
   back: <path d="m14 5-7 7 7 7"/>,
   next: <path d="m10 5 7 7-7 7"/>,
   trash: <><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7"/></>,
+  menu: <><path d="M4 8h16M4 16h16"/></>,
+  person: <><circle cx="12" cy="8" r="3.5"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></>,
 } satisfies Record<string, ReactNode>;
 export type IconName = keyof typeof paths;
 export function Icon({ name }: { name: IconName }) {
@@ -106,11 +108,12 @@ let scrollLockCount = 0;
 let originalOverflow = '';
 const focusableSelector = 'button, a[href], input:not([type="hidden"]), select, textarea, [tabindex]';
 
-export function Modal({ titleId, onClose, busy = false, compact = false, children }: {
+export function Modal({ titleId, onClose, busy = false, compact = false, className = '', children }: {
   titleId: string;
   onClose: () => void;
   busy?: boolean;
   compact?: boolean;
+  className?: string;
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -143,7 +146,7 @@ export function Modal({ titleId, onClose, busy = false, compact = false, childre
     };
   }, []);
   return (
-    <dialog ref={ref} className={'modal' + (compact ? ' compact' : '')} tabIndex={-1}
+    <dialog ref={ref} className={'modal' + (compact ? ' compact' : '') + (className ? ' ' + className : '')} tabIndex={-1}
       aria-labelledby={titleId} aria-busy={busy || undefined}
       onCancel={event => { event.preventDefault(); if (!busy) onClose(); }}
       onKeyDown={event => {

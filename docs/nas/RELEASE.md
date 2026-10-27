@@ -24,7 +24,7 @@ Release 复用同一验证流程，通过后才授权发布 job 写入 Packages/
 
 | 资产 | 用途 |
 |---|---|
-| `relay-service-vX.Y.Z-nas.tar.gz` | 完整 NAS 部署目录，包含 Compose、env 模板、秘密生成器和 PostgreSQL 初始化脚本；不含镜像本体或源码 |
+| `relay-service-vX.Y.Z-nas.tar.gz` | 完整 NAS 部署目录，包含启动时自动初始化的两服务 Compose、env 模板、秘密生成器和 PostgreSQL 角色初始化脚本；不含镜像本体或源码 |
 | `docker-compose.yaml` | 默认拉取镜像的 Compose；必须与完整包配套 |
 | `relay-service-vX.Y.Z.env.example` | 本次 digest 和秘密占位，不能直接当实际 `.env` |
 | `release-metadata.json` | 版本、Git 提交、镜像摘要、bundle 名称与 PostgreSQL 策略 |

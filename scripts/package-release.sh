@@ -52,8 +52,8 @@ compose = payload['docker-compose.yaml'][0].decode('utf-8')
 if re.search(r'^\s*build\s*:', compose, re.MULTILINE):
     sys.exit('Default release Compose must not require source builds')
 source_image = '${RELAY_IMAGE:-ghcr.io/davisding/relay-service:latest}'
-if compose.count(source_image) != 2:
-    sys.exit('Both source Relay services must default to the self-testing latest image')
+if compose.count(source_image) != 1:
+    sys.exit('The source Relay service must default to the self-testing latest image')
 # Versioned assets remain reproducible even while the source defaults to latest.
 compose = compose.replace(source_image, '${RELAY_IMAGE:?set RELAY_IMAGE to the release image digest}')
 payload['docker-compose.yaml'] = (compose.encode(), 0o644)
@@ -85,9 +85,14 @@ from GitHub Packages; package access and network availability must be available.
    Fresh secrets are generated with mode 600. The published Relay digest stays fixed.
 3. Edit .env for your NAS binding, public URL and existing Docker network. HTTPS
    public URLs require RELAY_SECURE_COOKIES=true. Default binding is loopback only.
-4. Import docker-compose.yaml with its supporting folder into UGREEN Docker Projects,
-   or run: docker compose --env-file .env -f docker-compose.yaml up -d
-   No source build is required. Migration runs before Relay starts.
+4. Import docker-compose.yaml into UGREEN Docker Projects, or run:
+   docker compose --env-file .env -f docker-compose.yaml up -d
+   PostgreSQL initializes roles/database on an empty volume. Relay then checks its
+   schema and automatically applies only pending SQL files before serving HTTP.
+   Existing schema/data are kept. Unknown history or initialization errors stop startup.
+   Normal deployment has only relay and postgres; no separate initialization command.
+   This development baseline targets a fresh database; no legacy-schema backfill is included.
+   For future compatible updates, back up and stop Relay before recreating it.
 5. Open RELAY_PUBLIC_URL, initialize the administrator with the generated bootstrap
    token, then log in. Preserve the encryption key separately with protected backups.
 

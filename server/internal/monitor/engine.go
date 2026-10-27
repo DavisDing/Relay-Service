@@ -280,6 +280,8 @@ func (e *Engine) serviceWithState(tx storage.Tx, rec serviceRecord) (Service, er
 	if s.Kind == KindHTTP || s.Kind == KindTCP {
 		s.EvidenceLevel = "connectivity_only"
 	}
+	// Capability declarations for the basic-check slice, never probe results.
+	// See docs/COMPATIBILITY.md; no inference or registry request is performed.
 	s.InferenceState = "not_tested"
 	s.UpdateState = "update_status_unavailable"
 	return s, nil
@@ -658,6 +660,8 @@ func (s Service) Freshness(now time.Time) string {
 	if s.LastCheckAt == nil {
 		return "never_observed"
 	}
+	// D-05: stale only after more than two configured check intervals.
+	// See docs/COMPATIBILITY.md for this basic-check freshness contract.
 	if now.Sub(*s.LastCheckAt) > 2*time.Duration(s.IntervalSeconds)*time.Second {
 		return "stale"
 	}

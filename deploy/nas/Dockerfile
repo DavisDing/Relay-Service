@@ -24,7 +24,7 @@ COPY server/go.mod server/go.sum ./
 RUN go mod download && go mod verify
 COPY server/ ./
 COPY --from=web /src/server/internal/webui/dist ./internal/webui/dist
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -tags webassets \
     -trimpath -buildvcs=false \
     -ldflags="-s -w -X main.version=${VERSION} -X main.revision=${REVISION} -X main.created=${CREATED}" \
     -o /out/relay ./cmd/relay

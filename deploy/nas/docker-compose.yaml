@@ -1,18 +1,5 @@
 name: relay-service
 services:
-  relay-migrate:
-    image: ${RELAY_IMAGE:-ghcr.io/davisding/relay-service:latest}
-    command: ["migrate"]
-    restart: "no"
-    user: "65532:65532"
-    environment:
-      RELAY_DATABASE_URL: postgres://relay_migrator:${RELAY_MIGRATOR_PASSWORD:?set RELAY_MIGRATOR_PASSWORD}@postgres:5432/relay?sslmode=disable
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - relay-backend
-
   relay:
     image: ${RELAY_IMAGE:-ghcr.io/davisding/relay-service:latest}
     container_name: relay-service
@@ -30,6 +17,7 @@ services:
       RELAY_LISTEN_ADDR: :8787
       RELAY_PUBLIC_URL: ${RELAY_PUBLIC_URL:-http://127.0.0.1:8787}
       RELAY_DATABASE_URL: postgres://relay_app:${RELAY_APP_PASSWORD:?set RELAY_APP_PASSWORD}@postgres:5432/relay?sslmode=disable
+      RELAY_MIGRATION_DATABASE_URL: postgres://relay_migrator:${RELAY_MIGRATOR_PASSWORD:?set RELAY_MIGRATOR_PASSWORD}@postgres:5432/relay?sslmode=disable
       RELAY_BOOTSTRAP_TOKEN: ${RELAY_BOOTSTRAP_TOKEN:-}
       RELAY_ENCRYPTION_KEY: ${RELAY_ENCRYPTION_KEY:?set RELAY_ENCRYPTION_KEY}
       RELAY_SECURE_COOKIES: ${RELAY_SECURE_COOKIES:-false}
@@ -37,8 +25,6 @@ services:
     ports:
       - "${RELAY_BIND_ADDRESS:-127.0.0.1}:${RELAY_HOST_PORT:-8787}:8787"
     depends_on:
-      relay-migrate:
-        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     networks:
@@ -67,7 +53,7 @@ services:
     networks:
       - relay-backend
     healthcheck:
-      test: ["CMD-SHELL","pg_isready -U postgres -d postgres"]
+      test: ["CMD-SHELL","pg_isready -h 127.0.0.1 -U postgres -d postgres"]
       interval: 10s
       timeout: 5s
       retries: 6

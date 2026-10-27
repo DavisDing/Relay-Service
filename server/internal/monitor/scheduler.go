@@ -26,6 +26,8 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// Exactly one result is sent. The one-slot buffer also accepts it if
+	// cancellation ends the receive loop before PruneRetention returns.
 	startupCleanup := make(chan error, 1)
 	go func() { startupCleanup <- e.PruneRetention(ctx) }()
 	failures := make(chan error, 2)

@@ -22,5 +22,5 @@ func migrate() error {
 	if err := db.Migrate(ctx); err != nil {
 		return err
 	}
-	return nil
+	return db.Ping(ctx)
 }

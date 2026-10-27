@@ -1,0 +1,94 @@
+export type Principal = { id: string; role: string };
+export type Check = {
+  id: string;
+  cursor: string;
+  status: string;
+  class?: string;
+  message?: string;
+  completed_at?: string;
+  started_at?: string;
+  duration_ms?: number;
+};
+export type Service = {
+  id: string;
+  name: string;
+  kind: string;
+  base_url: string;
+  ui_url?: string;
+  group?: string;
+  enabled: boolean;
+  interval_seconds: number;
+  timeout_seconds: number;
+  failure_threshold: number;
+  recovery_threshold: number;
+  allow_private: boolean;
+  generation: number;
+  credential_configured?: boolean;
+  status?: string;
+  freshness?: string;
+  evidence_level?: string;
+  inference_state?: string;
+  update_state?: string;
+  failure_count?: number;
+  recovery_count?: number;
+  current?: Check;
+  last_success_at?: string;
+  last_check_at?: string;
+  open_incident: boolean;
+  open_restriction: boolean;
+};
+export type Alert = {
+  cursor: number;
+  id: string;
+  service_id: string;
+  check_id: string;
+  generation: number;
+  incident_id: string;
+  kind: string;
+  severity: string;
+  message: string;
+  started_at: string;
+  resolved_at?: string;
+  count: number;
+  silenced: boolean;
+  silence_until?: string;
+  evidence_state?: string;
+};
+export type Device = {
+  id: string;
+  name: string;
+  created_at: string;
+  expires_at: string;
+  revoked_at?: string;
+  issued_by?: string;
+};
+export type AlertPage = {
+  items: Alert[];
+  ack_cursor: number;
+  next_cursor: string;
+  has_more: boolean;
+};
+export type Form = {
+  id: string;
+  name: string;
+  kind: string;
+  base_url: string;
+  ui_url: string;
+  group: string;
+  enabled: boolean;
+  interval_seconds: number;
+  timeout_seconds: number;
+  failure_threshold: number;
+  recovery_threshold: number;
+  allow_private: boolean;
+  generation: number;
+  token: string;
+  clear_token: boolean;
+};
+export type Confirmation = {
+  title: string;
+  description: string;
+  label: string;
+  run: (ensureCurrent: () => void) => Promise<void>;
+};
+

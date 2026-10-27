@@ -50,6 +50,10 @@ func OpenPostgres(ctx context.Context, databaseURL string, maxConns int32) (*Pos
 func (p *Postgres) Ping(ctx context.Context) error {
 	rows, err := p.pool.Query(ctx, "SELECT name FROM relay_schema_migrations ORDER BY name")
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "42P01" {
+			return fmt.Errorf("%w: schema ledger is missing", ErrSchemaNotReady)
+		}
 		return err
 	}
 	defer rows.Close()
@@ -74,8 +78,27 @@ func (p *Postgres) Ping(ctx context.Context) error {
 			expected = append(expected, entry.Name())
 		}
 	}
-	if strings.Join(applied, "\n") != strings.Join(expected, "\n") {
-		return fmt.Errorf("database schema is incompatible; run the matching migration image before starting")
+	pending, err := unappliedMigrations(expected, applied)
+	if err != nil {
+		return err
+	}
+	if len(pending) != 0 {
+		return fmt.Errorf("%w: this image has unapplied SQL files", ErrSchemaNotReady)
+	}
+	// A complete ledger must also have the expected tables and columns. Do not
+	// silently recreate a damaged database or hide an application-role grant error.
+	if _, err := p.pool.Exec(ctx, `SELECT r.bucket, r.record_key, r.value, r.updated_at, r.retention_at, s.sequence_name, s.next_value FROM relay_records r CROSS JOIN relay_sequences s LIMIT 0`); err != nil {
+		return fmt.Errorf("database schema is incomplete or inaccessible: %w", err)
+	}
+	var retentionReady bool
+	if err := p.pool.QueryRow(ctx, `SELECT
+		EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = 'relay_records'::regclass AND tgname = 'relay_records_retention_at' AND NOT tgisinternal AND tgenabled IN ('O', 'A'))
+		AND EXISTS (SELECT 1 FROM pg_index WHERE indrelid = 'relay_records'::regclass AND indexrelid = to_regclass('relay_records_retention_at_idx') AND indisvalid AND indisready)
+	`).Scan(&retentionReady); err != nil {
+		return fmt.Errorf("check Relay retention schema: %w", err)
+	}
+	if !retentionReady {
+		return fmt.Errorf("database schema is missing retention objects recorded as migrated")
 	}
 	return nil
 }
@@ -127,8 +150,8 @@ func (p *Postgres) Update(ctx context.Context, fn func(Tx) error) error {
 	return nil
 }
 
-// Migrate must be invoked explicitly with a deployment-side owner role.
-// The regular application role never migrates tables on process startup.
+// Migrate uses a dedicated schema role, either during startup initialization or
+// through the maintenance command. The business role does not need DDL grants.
 func (p *Postgres) Migrate(ctx context.Context) (resultErr error) {
 	conn, err := p.pool.Acquire(ctx)
 	if err != nil {
@@ -159,6 +182,13 @@ func (p *Postgres) Migrate(ctx context.Context) (resultErr error) {
 	}
 	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock(hashtext('relayservice:migrations'))"); err != nil {
 		return fmt.Errorf("lock migrations: %w", err)
+	}
+	var ledgerExists, recordsExist, sequencesExist bool
+	if err := conn.QueryRow(ctx, "SELECT to_regclass('relay_schema_migrations') IS NOT NULL, to_regclass('relay_records') IS NOT NULL, to_regclass('relay_sequences') IS NOT NULL").Scan(&ledgerExists, &recordsExist, &sequencesExist); err != nil {
+		return fmt.Errorf("inspect Relay schema before initialization: %w", err)
+	}
+	if !ledgerExists && (recordsExist || sequencesExist) {
+		return fmt.Errorf("Relay tables exist without a migration ledger; refusing initialization of an untracked schema")
 	}
 	if _, err := conn.Exec(ctx, `CREATE TABLE IF NOT EXISTS relay_schema_migrations (name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())`); err != nil {
 		return fmt.Errorf("initialize migration ledger: %w", err)
@@ -191,14 +221,14 @@ func (p *Postgres) Migrate(ctx context.Context) (resultErr error) {
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("read migration history: %w", err)
 	}
-	// Applied migrations must be an exact prefix of this image's history. This
-	// rejects newer/unknown migrations and gaps before executing any SQL file.
-	for index, name := range applied {
-		if index >= len(expected) || name != expected[index] {
-			return fmt.Errorf("database migration history is incompatible with this image; use the matching migration image or restore a matching backup")
-		}
+	if len(applied) == 0 && (recordsExist || sequencesExist) {
+		return fmt.Errorf("Relay tables exist without migration records; refusing initialization of an untracked schema")
 	}
-	for _, name := range expected[len(applied):] {
+	pending, err := unappliedMigrations(expected, applied)
+	if err != nil {
+		return err
+	}
+	for _, name := range pending {
 		contents, err := migrationFiles.ReadFile("migrations/" + name)
 		if err != nil {
 			return fmt.Errorf("read migration %s: %w", name, err)
@@ -219,6 +249,17 @@ func (p *Postgres) Migrate(ctx context.Context) (resultErr error) {
 		}
 	}
 	return nil
+}
+
+// Only a contiguous prefix can be advanced. Unknown, newer, reordered or
+// gapped histories are incompatible and must never trigger initialization.
+func unappliedMigrations(expected, applied []string) ([]string, error) {
+	for index, name := range applied {
+		if index >= len(expected) || name != expected[index] {
+			return nil, fmt.Errorf("database migration history is incompatible with this image; use the matching migration image or restore a matching backup")
+		}
+	}
+	return expected[len(applied):], nil
 }
 
 type databaseTx interface {
@@ -343,7 +384,13 @@ func (t *postgresTx) Count(bucket string, options CountOptions) (int64, error) {
 	// Keep the SQL predicate aligned with Go's time.Time.IsZero semantics.
 	// time.Time{} is serialized as 0001-01-01T00:00:00Z, so IS NOT NULL alone
 	// would count records that expiredCheck intentionally leaves in place.
-	query += fmt.Sprintf(" AND NULLIF(value->>'%s','') IS NOT NULL AND (NULLIF(value->>'%s',''))::timestamptz <> TIMESTAMPTZ '0001-01-01 00:00:00+00' AND (NULLIF(value->>'%s',''))::timestamptz < $%d", options.TimeField, options.TimeField, options.TimeField, n)
+	timestamp := fmt.Sprintf("(NULLIF(value->>'%s',''))::timestamptz", options.TimeField)
+	if (bucket == "monitor.history" && options.TimeField == "completed_at") || (bucket == AuditBucket && options.TimeField == "at") {
+		// The database trigger derives this typed column from the JSON record.
+		// A plain timestamp index avoids non-immutable text casts in indexes.
+		timestamp = "retention_at"
+	}
+	query += fmt.Sprintf(" AND %s IS NOT NULL AND %s <> TIMESTAMPTZ '0001-01-01 00:00:00+00' AND %s < $%d", timestamp, timestamp, timestamp, n)
 	args = append(args, options.Before)
 	n++
 	for _, excluded := range options.ExcludeStatuses {

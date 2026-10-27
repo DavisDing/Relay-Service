@@ -44,7 +44,7 @@ jobs:
       - name: Install web dependencies from the lockfile
         working-directory: web
         run: pnpm install --frozen-lockfile
-      - name: Verify web session and response races
+      - name: Verify web rendering, styles and response races
         working-directory: web
         run: pnpm test
       - name: Build the embedded web application
@@ -61,9 +61,12 @@ jobs:
       - name: Run Go tests with the race detector
         working-directory: server
         run: go test -race ./...
+      - name: Verify the compiled web application is embedded
+        working-directory: server
+        run: go test -race -tags webassets ./internal/webui ./internal/api ./cmd/relay
       - name: Run Go static checks
         working-directory: server
-        run: go vet ./...
+        run: go vet ./... && go vet -tags webassets ./...
       - name: Test release metadata validation
         run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
       - name: Test release packaging
