@@ -76,9 +76,9 @@ func expiredCheck(c Check, cutoff *time.Time) bool {
 	return cutoff != nil && !c.CompletedAt.IsZero() && c.CompletedAt.Before(*cutoff) && c.Status != StatusQueued && c.Status != StatusRunning
 }
 
-// PreviewRetention counts in read-only pages, avoiding a long global write
-// transaction. Counts describe the preview time; ongoing collection may change
-// them before confirmation. Confirmation authorizes the prospective policy too.
+// PreviewRetention counts through storage-level timestamp queries. Counts
+// describe the preview time; ongoing collection may change them before
+// confirmation. Confirmation authorizes the prospective policy too.
 func (e *Engine) PreviewRetention(ctx context.Context, actor string, requested RetentionPolicy) (RetentionPreview, error) {
 	if actor != "admin" || !validRetention(requested) {
 		return RetentionPreview{}, ErrValidation
@@ -96,44 +96,29 @@ func (e *Engine) PreviewRetention(ctx context.Context, actor string, requested R
 	}
 	now := e.now()
 	preview := RetentionPreview{ID: id, ExpiresAt: now.Add(5 * time.Minute), Policy: RetentionPolicy{HistoryDays: requested.HistoryDays, AuditDays: requested.AuditDays, Generation: current.Generation}, HistoryBefore: retentionCutoff(now, requested.HistoryDays), AuditBefore: retentionCutoff(now, requested.AuditDays)}
-	for _, bucket := range []string{historyBucket, auditBucket} {
-		if bucket == historyBucket && preview.HistoryBefore == nil || bucket == auditBucket && preview.AuditBefore == nil {
-			continue
-		}
-		after := ""
-		for {
-			var rows []storage.Record
-			err := e.store.View(ctx, func(tx storage.Tx) error {
-				var err error
-				rows, err = tx.Scan(bucket, storage.Scan{After: after, Limit: 500})
-				return err
+	if preview.HistoryBefore != nil {
+		err := e.store.View(ctx, func(tx storage.Tx) error {
+			var err error
+			preview.HistoryCount, err = tx.Count(historyBucket, storage.CountOptions{
+				Before:          *preview.HistoryBefore,
+				TimeField:       "completed_at",
+				StatusField:     "status",
+				ExcludeStatuses: []string{StatusQueued, StatusRunning},
 			})
-			if err != nil {
-				return RetentionPreview{}, err
-			}
-			for _, row := range rows {
-				if bucket == historyBucket {
-					var c Check
-					if err := json.Unmarshal(row.Value, &c); err != nil {
-						return RetentionPreview{}, err
-					}
-					if expiredCheck(c, preview.HistoryBefore) {
-						preview.HistoryCount++
-					}
-				} else {
-					var a storage.AuditRecord
-					if err := json.Unmarshal(row.Value, &a); err != nil {
-						return RetentionPreview{}, err
-					}
-					if !a.At.IsZero() && a.At.Before(*preview.AuditBefore) {
-						preview.AuditCount++
-					}
-				}
-				after = row.Key
-			}
-			if len(rows) < 500 {
-				break
-			}
+			return err
+		})
+		if err != nil {
+			return RetentionPreview{}, err
+		}
+	}
+	if preview.AuditBefore != nil {
+		err := e.store.View(ctx, func(tx storage.Tx) error {
+			var err error
+			preview.AuditCount, err = tx.Count(auditBucket, storage.CountOptions{Before: *preview.AuditBefore, TimeField: "at"})
+			return err
+		})
+		if err != nil {
+			return RetentionPreview{}, err
 		}
 	}
 	err = e.store.Update(ctx, func(tx storage.Tx) error {

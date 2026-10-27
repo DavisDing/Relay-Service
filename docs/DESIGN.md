@@ -49,9 +49,9 @@ NAS Relay 服务端采用 Go；推荐模块化单体（API、静态 Web、采集
 | React 管理页面与 v1 API | WP-3 基础运维入口；无完整模型/路由、账本、余额、镜像更新、恢复向导 |
 | PostgreSQL 存储、显式 SQL migration、应用/迁移身份、数据库单活锁、Compose | 已编码；用户选择跳过真实数据库实测，Docker/UGOS 未验证，不能宣称持久化/升级/恢复已验收 |
 
-初版持久化使用 bucket/key JSONB 业务记录 + 普通 sequence 计数表，短事务全局写锁保证跨实例读改写原子性；没有实现全文所有领域表、外键或查询索引。后续分域结构化需新增兼容迁移，不能修改已发布 migration 或就地清空数据。schema ledger 与业务表权限分离，迁移和运行实例共用单活锁；独立克隆库的单活隔离仍属运维责任。
+初版持久化使用 bucket/key JSONB 业务记录 + 普通 sequence 计数表，短事务全局写锁保证跨实例读改写原子性；没有实现全文所有领域表、外键或通用查询索引，保留预览使用单独的时间表达式索引。后续分域结构化需新增兼容迁移，不能修改已发布 migration 或就地清空数据。schema ledger 与业务表权限分离，迁移和运行实例共用单活锁；独立克隆库的单活隔离仍属运维责任。
 
-未实现的保留清理/容量保护、Retry-After 退避、模型/路由写入、账本/余额、正文、付费探针、镜像更新、客户端、灾备授权轮换等完整需求保持原目标。`contracts/IMPLEMENTATION.md` 记录当前合同，`COMPATIBILITY.md` 记录端点证据，`nas/DEPLOY.md` / `nas/VALIDATION.md` 记录部署与验收边界。下文未明确标为本轮实现的模块仍为目标方案。
+未实现的容量保护、Retry-After 退避、模型/路由写入、账本/余额、正文、付费探针、镜像更新、客户端、灾备授权轮换等完整需求保持原目标；历史/审计保留清理已实现为管理员预览确认后的分批后台任务，但真实数据库、Docker 和 NAS 验收仍待执行。`contracts/IMPLEMENTATION.md` 记录当前合同，`COMPATIBILITY.md` 记录端点证据，`nas/DEPLOY.md` / `nas/VALIDATION.md` 记录部署与验收边界。下文未明确标为本轮实现的模块仍为目标方案。
 
 ## 1. 目标、现状与差异
 

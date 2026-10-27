@@ -24,11 +24,10 @@ func (e *Engine) Run(ctx context.Context) error {
 	if err := e.recoverInterrupted(ctx); err != nil {
 		return err
 	}
-	if err := e.PruneRetention(ctx); err != nil {
-		return err
-	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	startupCleanup := make(chan error, 1)
+	go func() { startupCleanup <- e.PruneRetention(ctx) }()
 	failures := make(chan error, 2)
 	var wg sync.WaitGroup
 	for i := 0; i < 2; i++ {
@@ -54,6 +53,12 @@ loop:
 		select {
 		case <-ctx.Done():
 			break loop
+		case err := <-startupCleanup:
+			startupCleanup = nil
+			if err != nil {
+				runErr = err
+				break loop
+			}
 		case err := <-failures:
 			runErr = err
 			break loop

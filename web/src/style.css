@@ -18,6 +18,7 @@
   --success: #247837;
   --warning: #946000;
   --danger: #c41d30;
+  --unauthorized: #a05a00;
   --queued: #7444ad;
   --running: #006caa;
   --interrupted: #a34713;
@@ -50,6 +51,7 @@
   --success: #78d58d;
   --warning: #f0c36c;
   --danger: #ff8b93;
+  --unauthorized: #ffd166;
   --queued: #cfabff;
   --running: #75caff;
   --interrupted: #ffb276;
@@ -80,6 +82,7 @@
     --success: #78d58d;
     --warning: #f0c36c;
     --danger: #ff8b93;
+    --unauthorized: #ffd166;
     --queued: #cfabff;
     --running: #75caff;
     --interrupted: #ffb276;
@@ -540,6 +543,9 @@ header {
 
 .card dl {
   font-size: 13px;
+  display: grid;
+  grid-template-columns: repeat(2,minmax(0,1fr));
+  gap: 12px 16px;
   padding: 12px 0;
   margin: 16px 0;
   border-top: 1px solid var(--line-soft);
@@ -547,10 +553,7 @@ header {
 }
 
 .card dl div {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  margin: 10px 0;
+  min-width: 0;
 }
 
 .card dt {
@@ -560,8 +563,21 @@ header {
 .card dd {
   margin: 0;
   color: var(--text-secondary);
-  text-align: right;
+  margin-top: 4px;
+  text-align: left;
+  overflow-wrap: anywhere;
 }
+
+.alert-severity {
+  display: inline-block;
+  margin-right: 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.alert-severity.warning { color: var(--warning); }
+.alert-severity.info { color: var(--text-tertiary); }
 
 .buttons {
   display: flex;
@@ -935,8 +951,8 @@ footer {
 }
 
 .status.unauthorized {
-  color: var(--danger);
-  background: color-mix(in srgb,var(--danger) 10%,transparent);
+  color: var(--unauthorized);
+  background: color-mix(in srgb,var(--unauthorized) 12%,transparent);
   border: 1px dashed currentColor;
 }
 
@@ -967,8 +983,8 @@ footer {
 }
 
 .status.paused {
-  color: var(--paused);
-  background: var(--surface-muted);
+  color: var(--accent);
+  background: color-mix(in srgb,var(--accent) 10%,transparent);
   border: 1px solid var(--line);
 }
 

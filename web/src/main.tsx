@@ -37,6 +37,8 @@ type Service = {
   evidence_level?: string;
   inference_state?: string;
   update_state?: string;
+  failure_count?: number;
+  recovery_count?: number;
   current?: Check;
   last_success_at?: string;
   last_check_at?: string;
@@ -47,6 +49,9 @@ type Alert = {
   cursor: number;
   id: string;
   service_id: string;
+  check_id: string;
+  generation: number;
+  incident_id: string;
   kind: string;
   severity: string;
   message: string;
@@ -143,6 +148,8 @@ const pageTitles: Record<string, string> = {
 const time = (value?: string) => value && !value.startsWith('0001')
   ? new Date(value).toLocaleString('zh-CN')
   : '尚无记录';
+const evidence = (value?: string) => value === 'process' ? '进程可达' : value === 'connectivity_only' ? '仅端口连通' : '未知';
+const severity = (value?: string) => value === 'warning' ? '警告' : value === 'info' ? '信息' : '未分级';
 
 function toInput(service: Service): Form {
   return {
@@ -506,7 +513,8 @@ function App() {
             ) : (
               <div className="grid">
                 {services.map(service => {
-                  const stale = service.freshness === 'stale' || service.freshness === 'missing' || !service.last_check_at;
+                  const stale = service.freshness === 'stale';
+                  const neverObserved = service.freshness === 'never_observed' || !service.last_check_at;
                   const status = service.enabled ? service.status || service.current?.status || 'unknown' : 'paused';
                   return (
                     <article className="card" key={service.id}>
@@ -520,9 +528,17 @@ function App() {
                         <div><dt>最近检查</dt><dd>{time(service.last_check_at)}</dd></div>
                         <div><dt>最近成功</dt><dd>{time(service.last_success_at)}</dd></div>
                         <div><dt>检查耗时</dt><dd>{service.current?.duration_ms !== undefined ? service.current.duration_ms + ' ms' : '未知'}</dd></div>
+                        <div><dt>证据层级</dt><dd>{evidence(service.evidence_level)}</dd></div>
+                        <div><dt>检查节奏</dt><dd>{service.interval_seconds ? `每 ${service.interval_seconds}s · ${service.timeout_seconds}s 超时` : '未提供'}</dd></div>
+                        <div><dt>检查凭据</dt><dd>{service.credential_configured === undefined ? '未提供' : service.credential_configured ? '已配置' : '未配置'}</dd></div>
+                        <div><dt>连续失败</dt><dd>{service.failure_count === undefined ? '未提供' : `${service.failure_count} / ${service.failure_threshold}`}</dd></div>
+                        <div><dt>恢复计数</dt><dd>{service.recovery_count === undefined ? '未提供' : `${service.recovery_count} / ${service.recovery_threshold}`}</dd></div>
                       </dl>
                       {stale && service.enabled && (
                         <p className="warning">{service.last_check_at ? '采集已过期' : '等待首次检查'}，暂不判断当前健康</p>
+                      )}
+                      {neverObserved && service.enabled && !stale && (
+                        <p className="warning">等待首次检查，暂不判断当前健康</p>
                       )}
                       {service.current?.message && <p className="check-message">{service.current.message}</p>}
                       <p className="capability">推理能力未测试 · 版本更新证据未接入</p>
@@ -580,7 +596,11 @@ function App() {
                     {alerts.map(alert => (
                       <tr key={alert.id}>
                         <td>{services.find(service => service.id === alert.service_id)?.name || alert.service_id}<small>{alert.kind}</small></td>
-                        <td>{alert.message}
+                        <td><span className={'alert-severity ' + (alert.severity || 'unknown')}>{severity(alert.severity)}</span> {alert.message}
+                          {alert.count > 0 && <small>第 {alert.count} 次失败触发</small>}
+                          {alert.incident_id && <small>故障组 {alert.incident_id.slice(0, 8)}</small>}
+                          {alert.check_id && <small>检查 {alert.check_id.slice(0, 8)}</small>}
+                          <small>配置代际 {alert.generation}</small>
                           {alert.evidence_state === 'expired' && <small>检查明细已过保留期</small>}
                           {alert.evidence_state === 'unavailable' && <small>检查明细不可用，已保留事件摘要</small>}
                         </td><td>{time(alert.started_at)}</td>

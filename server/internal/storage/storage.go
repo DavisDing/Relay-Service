@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 )
 
 var ErrNotFound = errors.New("record not found")
@@ -23,11 +24,23 @@ type Scan struct {
 	Reverse bool
 }
 
+// CountOptions describes a bounded timestamp count over JSON records. The
+// storage layer owns the query shape so callers do not need to scan and
+// deserialize every record in a large bucket just to prepare a preview.
+type CountOptions struct {
+	Prefix          string
+	Before          time.Time
+	TimeField       string
+	StatusField     string
+	ExcludeStatuses []string
+}
+
 type Tx interface {
 	Get(bucket, key string, value any) error
 	Put(bucket, key string, value any) error
 	Delete(bucket, key string) error
 	Scan(bucket string, options Scan) ([]Record, error)
+	Count(bucket string, options CountOptions) (int64, error)
 	Next(sequence string) (uint64, error)
 }
 

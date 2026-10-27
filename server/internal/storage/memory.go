@@ -3,9 +3,11 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Memory is a transactional test/development store. Production uses PostgreSQL.
@@ -170,6 +172,48 @@ func (t *memoryTx) Scan(bucket string, options Scan) ([]Record, error) {
 		out = append(out, Record{Key: key, Value: append(json.RawMessage(nil), t.buckets[bucket][key]...)})
 	}
 	return out, nil
+}
+
+func (t *memoryTx) Count(bucket string, options CountOptions) (int64, error) {
+	if err := validIdentity(bucket, "count"); err != nil {
+		return 0, err
+	}
+	if options.TimeField == "" || options.Before.IsZero() {
+		return 0, fmt.Errorf("count requires a timestamp field and cutoff")
+	}
+	if err := t.ctx.Err(); err != nil {
+		return 0, err
+	}
+	var total int64
+	for key, raw := range t.buckets[bucket] {
+		if options.Prefix != "" && !strings.HasPrefix(key, options.Prefix) {
+			continue
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			return 0, err
+		}
+		var at time.Time
+		if value, ok := fields[options.TimeField]; !ok || json.Unmarshal(value, &at) != nil || !at.Before(options.Before) {
+			continue
+		}
+		if options.StatusField != "" {
+			var status string
+			_ = json.Unmarshal(fields[options.StatusField], &status)
+			excluded := false
+			for _, candidate := range options.ExcludeStatuses {
+				if status == candidate {
+					excluded = true
+					break
+				}
+			}
+			if excluded {
+				continue
+			}
+		}
+		total++
+	}
+	return total, nil
 }
 func (t *memoryTx) Next(sequence string) (uint64, error) {
 	if t.readOnly {

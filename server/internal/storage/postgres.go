@@ -325,6 +325,48 @@ func (t *postgresTx) Scan(bucket string, options Scan) ([]Record, error) {
 	return out, nil
 }
 
+func (t *postgresTx) Count(bucket string, options CountOptions) (int64, error) {
+	if err := validIdentity(bucket, "count"); err != nil {
+		return 0, err
+	}
+	if !validJSONField(options.TimeField) || (options.StatusField != "" && !validJSONField(options.StatusField)) || (len(options.ExcludeStatuses) > 0 && options.StatusField == "") || options.Before.IsZero() {
+		return 0, fmt.Errorf("invalid count options")
+	}
+	query := "SELECT count(*) FROM relay_records WHERE bucket=$1"
+	args := []any{bucket}
+	n := 2
+	if options.Prefix != "" {
+		query += fmt.Sprintf(" AND left(record_key, length($%d))=$%d", n, n)
+		args = append(args, options.Prefix)
+		n++
+	}
+	query += fmt.Sprintf(" AND NULLIF(value->>'%s','') IS NOT NULL AND (value->>'%s')::timestamptz < $%d", options.TimeField, options.TimeField, n)
+	args = append(args, options.Before)
+	n++
+	for _, excluded := range options.ExcludeStatuses {
+		query += fmt.Sprintf(" AND COALESCE(value->>'%s','') <> $%d", options.StatusField, n)
+		args = append(args, excluded)
+		n++
+	}
+	var total int64
+	if err := t.tx.QueryRow(t.ctx, query, args...).Scan(&total); err != nil {
+		return 0, fmt.Errorf("count %s records: %w", bucket, err)
+	}
+	return total, nil
+}
+
+func validJSONField(field string) bool {
+	if field == "" {
+		return false
+	}
+	for _, r := range field {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '_' {
+			return false
+		}
+	}
+	return true
+}
+
 func (t *postgresTx) Next(sequence string) (uint64, error) {
 	if err := validIdentity(sequence, "sequence"); err != nil {
 		return 0, err
