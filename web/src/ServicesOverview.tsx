@@ -20,6 +20,7 @@ type Props = {
   onToggle: (service: Service) => unknown;
   onCheck: (service: Service) => unknown;
   onNetwork?: (service: Service) => void;
+  onModels?: (service: Service) => void;
 };
 
 export function serviceStatus(service: Service) {
@@ -203,8 +204,11 @@ function duration(service: Service) {
   return service.current?.duration_ms !== undefined ? service.current.duration_ms + ' ms' : '—';
 }
 
-function ServiceRow({ service, admin, busy, onHistory, onEdit, onToggle, onCheck, onNetwork }: Props & { service: Service }) {
+function ServiceRow({ service, admin, busy, onHistory, onEdit, onToggle, onCheck, onNetwork, onModels }: Props & { service: Service }) {
   const status = serviceStatus(service);
+  const modelSource = ['litellm', 'workbuddy2api', 'openai', 'ollama', 'openwebui', 'statuspage'].includes(service.kind)
+    || !!service.collect_models || !!service.collect_logs || !!service.current?.details?.gateway || !!service.current?.details?.models?.length;
+  const gateway = service.current?.details?.gateway;
   return <details className="service-row">
     <summary>
       <div className="service-identity"><span className="service-symbol"><Icon name="server" /></span><div><b title={service.name}>{service.name}</b><span>{kindLabels[service.kind] || service.kind} · {service.group || '未分组'}</span></div></div>
@@ -227,9 +231,12 @@ function ServiceRow({ service, admin, busy, onHistory, onEdit, onToggle, onCheck
         <div><dt>恢复计数</dt><dd>{service.recovery_count === undefined ? '未提供' : `${service.recovery_count} / ${service.recovery_threshold}`}</dd></div>
       </dl>
       {service.current?.message && <p className="check-detail">{message(service.current.message)}</p>}
-      {service.kind === 'mihomo' && onNetwork ? <p className="muted">订阅、节点、流量、连接与日志请在网络代理中查看。</p> : <CheckDetails check={service.current} />}
+      {service.kind === 'mihomo' && onNetwork ? <p className="muted">订阅、节点、流量、连接与日志请在网络代理中查看。</p>
+        : modelSource && onModels ? <p className="muted">{gateway ? `最近采集：模型目录 ${gateway.model_count} 项 · 部署 ${gateway.deployment_count} 项。` : ''}模型、渠道、调用证据与公开状态请在大模型中查看；目录可见不代表推理可用。</p>
+          : <CheckDetails check={service.current} />}
       <div className="buttons">
         {service.kind === 'mihomo' && onNetwork && <Button className="secondary" disabled={busy} onClick={() => onNetwork(service)}>查看网络代理<Icon name="next" /></Button>}
+        {modelSource && onModels && <Button className="secondary" disabled={busy} onClick={() => onModels(service)}>查看大模型<Icon name="next" /></Button>}
         <Button className="secondary" disabled={busy} onClick={() => onHistory(service)}><Icon name="history" />历史</Button>
         {service.ui_url && <a className="button secondary" href={service.ui_url} target="_blank" rel="noreferrer noopener">WebUI ↗</a>}
         {admin && <>

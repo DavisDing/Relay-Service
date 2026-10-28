@@ -13,6 +13,7 @@ import { AlertsPanel } from './AlertsPanel';
 import { ServicesOverview } from './ServicesOverview';
 import { ServiceEditor, HistoryDialog } from './ServiceDialogs';
 import { NetworkProxy } from './NetworkProxy';
+import { ModelsWorkspace } from './ModelsWorkspace';
 
 const defaults: Form = {
   id: '',
@@ -33,7 +34,7 @@ const defaults: Form = {
 };
 const pageTitles: Record<string, string> = {
   services: '服务总览', alerts: '故障与告警', devices: '访问设备',
-  diagnostic: '诊断摘要', settings: '系统设置', network: '网络代理',
+  diagnostic: '诊断摘要', settings: '系统设置', network: '网络代理', models: '大模型',
 };
 
 function toInput(service: Service): Form {
@@ -80,6 +81,7 @@ function App() {
   const [tab, setTab] = useState('services');
   const [networkRefresh, setNetworkRefresh] = useState(0);
   const [networkService, setNetworkService] = useState('');
+  const [modelService, setModelService] = useState('');
   const [alertPage, setAlertPage] = useState('');
   const [loadedAlertPage, setLoadedAlertPage] = useState('');
   const [alertPages, setAlertPages] = useState<string[]>([]);
@@ -132,6 +134,7 @@ function App() {
     setAckCursor(0);
     setTab('services');
     setNetworkService('');
+    setModelService('');
   }, []);
 
   const refresh = useCallback(async () => {
@@ -392,7 +395,7 @@ function App() {
           <div className="page-title">
             <span className="eyebrow">OPERATIONS</span>
             <h1 id="workspace-title" tabIndex={-1}>{pageTitles[tab]}</h1>
-            <p className="sub">{tab === 'network' ? '自动更新 · 数据时间与覆盖情况见各页' : <>最近同步 {time(tab === 'alerts' ? alertsSynced : servicesSynced)} · 每 60 秒刷新</>}</p>
+            <p className="sub">{tab === 'network' || tab === 'models' ? '自动更新 · 数据时间与覆盖情况见各页' : <>最近同步 {time(tab === 'alerts' ? alertsSynced : servicesSynced)} · 每 60 秒刷新</>}</p>
           </div>
           <Button className="secondary refresh-view" disabled={busy} onClick={() => { setNetworkRefresh(value => value + 1); return refresh(); }} aria-label="刷新视图">
             <Icon name="refresh" /><span>刷新视图</span>
@@ -410,6 +413,7 @@ function App() {
           alertsCurrent={loadedAlertPage === '' && !refreshErrors.alerts} alertsComplete={!alertsMore}
           admin={me.role === 'admin'} busy={busy}
           onNetwork={service => { setNetworkService(service.id); setTab('network'); window.scrollTo(0, 0); }}
+          onModels={service => { setModelService(service.id); setTab('models'); window.scrollTo(0, 0); }}
           onAdd={() => { setError(''); setForm({ ...defaults }); }}
           onAlerts={() => { setAlertPage(''); setAlertPages([]); setTab('alerts'); }}
           onHistory={showHistory} onEdit={service => { setError(''); setForm(toInput(service)); }}
@@ -423,6 +427,9 @@ function App() {
 
         {tab === 'network' && <NetworkProxy services={services} admin={me.role === 'admin'} refreshKey={networkRefresh} initialServiceID={networkService}
           onUnauthorized={clearSession} onAdd={() => { setError(''); setForm({ ...defaults, kind: 'mihomo' }); }} />}
+
+        {tab === 'models' && <ModelsWorkspace services={services} admin={me.role === 'admin'} refreshKey={networkRefresh} initialServiceID={modelService}
+          onUnauthorized={clearSession} onEditService={service => { setError(''); setForm(toInput(service)); }} />}
 
         {tab === 'alerts' && <AlertsPanel alerts={alerts} services={services} ackCursor={ackCursor}
           busy={busy} admin={me.role === 'admin'} skippedUnreadPage={skippedUnreadPage} canAck={canAck}

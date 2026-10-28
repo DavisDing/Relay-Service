@@ -28,7 +28,7 @@ export function CheckDetails({ check }: { check?: Check }) {
       <ul>{details.models?.map(model => <li key={model.id}>{model.id} · 推理未测试</li>)}</ul>
       {!details.count && <p>此凭据下没有可见模型。</p>}
     </>}
-    {details.source === '/api/v2/summary.json' && <>
+    {details.source === '/api/v2/summary.json' && !details.public_status && <>
       <strong>服务商报告的组件状态（{details.count}）</strong>
       <ul>{details.components?.map((component, index) => <li key={index}>{component.name} · {componentStates[component.status] || '未知'}</li>)}</ul>
       <p>仅表示服务商公布的状态，当前账号或网络下的实际可用性还需独立证据。</p>

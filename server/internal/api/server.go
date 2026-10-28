@@ -96,6 +96,7 @@ type silencePayload struct {
 // writable monitoring configuration. The API never serializes a secret.
 type deviceService struct {
 	ID              string         `json:"id"`
+	Generation      int64          `json:"generation"`
 	Name            string         `json:"name"`
 	Kind            string         `json:"kind"`
 	UIURL           string         `json:"ui_url,omitempty"`
@@ -115,7 +116,7 @@ type deviceService struct {
 }
 
 func projectService(s monitor.Service) deviceService {
-	return deviceService{ID: s.ID, Name: s.Name, Kind: s.Kind, UIURL: s.UIURL, Group: s.Group, Enabled: s.Enabled, Current: s.Current, LastSuccess: s.LastSuccess, LastCheckAt: s.LastCheckAt, LastSuccessAt: s.LastSuccessAt, OpenIncident: s.OpenIncident, OpenRestriction: s.OpenRestriction, Status: s.Status, Freshness: s.FreshnessState, EvidenceLevel: s.EvidenceLevel, InferenceState: s.InferenceState, UpdateState: s.UpdateState}
+	return deviceService{ID: s.ID, Generation: s.Generation, Name: s.Name, Kind: s.Kind, UIURL: s.UIURL, Group: s.Group, Enabled: s.Enabled, Current: s.Current, LastSuccess: s.LastSuccess, LastCheckAt: s.LastCheckAt, LastSuccessAt: s.LastSuccessAt, OpenIncident: s.OpenIncident, OpenRestriction: s.OpenRestriction, Status: s.Status, Freshness: s.FreshnessState, EvidenceLevel: s.EvidenceLevel, InferenceState: s.InferenceState, UpdateState: s.UpdateState}
 }
 
 func New(store storage.Store, accessService *access.Service, monitorEngine *monitor.Engine, options Options) http.Handler {
@@ -131,6 +132,7 @@ func New(store storage.Store, accessService *access.Service, monitorEngine *moni
 func (s *Server) routes() {
 	s.databaseRoutes()
 	s.networkRoutes()
+	s.modelsRoutes()
 	s.mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "live"})
 	})
