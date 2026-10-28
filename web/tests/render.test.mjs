@@ -27,7 +27,10 @@ const { Icon, ThemeControl, Toast, Button } = load('ui.tsx');
 const { AlertsPanel } = load('AlertsPanel.tsx');
 const { RetentionPanel } = load('RetentionPanel.tsx');
 const { Navigation } = load('Navigation.tsx');
-const css = ['style.css', 'navigation.css'].map(file => readFileSync(new URL('../src/' + file, import.meta.url), 'utf8')).join('\n');
+// Inspect styles in the same directory as the components scanned below. A
+// workspace can own a stylesheet without adding it to this test's file list.
+const css = readdirSync(new URL('../src/', import.meta.url)).filter(file => file.endsWith('.css')).sort()
+  .map(file => readFileSync(new URL('../src/' + file, import.meta.url), 'utf8')).join('\n');
 const noop = () => {};
 const base = {
   id: 'a', name: 'LiteLLM', kind: 'litellm', group: '核心', base_url: 'http://example.invalid',
