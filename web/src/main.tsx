@@ -175,7 +175,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!me) return;
+    if (!me || me.must_change_password) return;
     void refresh();
     const timer = setInterval(() => void refresh(), 60000);
     return () => {
@@ -185,7 +185,7 @@ function App() {
   }, [me, refresh]);
 
   useEffect(() => {
-    if (tab !== 'devices' || !me) return;
+    if (tab !== 'devices' || !me || me.must_change_password) return;
     const session = sessionVersion.current;
     let active = true;
     api<Device[]>('/devices').then(response => {
@@ -213,7 +213,7 @@ function App() {
     try {
       await fn(ensureCurrent);
       if (!current()) return false;
-      if (me && refreshAfter) await refresh();
+      if (me && !me.must_change_password && refreshAfter) await refresh();
       return current();
     } catch (reason) {
       if (!current() || reason instanceof APIRequestSupersededError) return false;
@@ -249,6 +249,22 @@ function App() {
       sessionVersion.current++;
       setMe(identity.data);
     });
+  }
+
+  async function completePassword(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    if (data.get('password') !== data.get('confirmation')) {
+      setError('两次输入的密码不一致。');
+      return;
+    }
+    await action(async ensureCurrent => {
+      await api('/auth/password', 'POST', { username: String(data.get('username')), password: String(data.get('password')) });
+      ensureCurrent();
+      clearSession();
+      setAuthMode('login');
+      setNotice('正式账号已保存，临时密码已失效，请使用新账号密码登录。');
+    }, false);
   }
 
   async function save(event: React.FormEvent) {
@@ -293,6 +309,22 @@ function App() {
     </main>
   );
 
+  if (me?.must_change_password) return (
+    <main className="login">
+      <div className="login-head"><div className="login-mark"><Icon name="pulse" /></div><ThemeControl /></div>
+      <span className="eyebrow">NAS OPERATIONS</span>
+      <h1>设置管理员账号</h1>
+      <p className="sub">首次登录，请设置正式密码后使用控制台。</p>
+      <form onSubmit={completePassword}>
+        <label>用户名<input name="username" autoComplete="username" defaultValue="admin" minLength={3} maxLength={64} required /></label>
+        <label>新密码<input name="password" type="password" autoComplete="new-password" minLength={12} maxLength={1024} required /></label>
+        <label>确认新密码<input name="confirmation" type="password" autoComplete="new-password" minLength={12} maxLength={1024} required /></label>
+        {error && <p role="alert" className="error">{error}</p>}
+        <Button type="submit" loading={busy}>保存并重新登录</Button>
+      </form>
+    </main>
+  );
+
   if (!me) return (
     <main className="login">
       <div className="login-head">
@@ -304,6 +336,7 @@ function App() {
       <p className="sub">服务状态，一处掌握</p>
       <form onSubmit={auth}>
         <h2>{authMode === 'bootstrap' ? '初始化管理员' : '管理员登录'}</h2>
+        {authMode === 'login' && <p>首次登录使用 admin，临时密码见 NAS 的 Relay 容器日志。</p>}
         {authMode === 'bootstrap' && (
           <label>部署初始化令牌<input name="token" type="password" autoComplete="off" required /></label>
         )}
@@ -315,12 +348,6 @@ function App() {
         </label>
         {error && <p role="alert" className="error">{error}</p>}
         <Button type="submit" loading={busy}>{authMode === 'bootstrap' ? '创建管理员' : '登录'}</Button>
-        <Button className="text" type="button" disabled={busy} onClick={() => {
-          setAuthMode(authMode === 'login' ? 'bootstrap' : 'login');
-          setError('');
-        }}>
-          {authMode === 'login' ? '首次使用？初始化管理员' : '返回登录'}
-        </Button>
       </form>
       <small>凭据只在服务端使用。公网访问请使用可信 HTTPS 入口。</small>
       <Toast message={notice} onDismiss={dismissNotice} />

@@ -69,12 +69,15 @@ jobs:
         run: go vet ./... && go vet -tags webassets ./...
       - name: Test release metadata validation
         run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+      - name: Verify embedded NAS startup scripts
+        run: python3 scripts/render-nas-compose.py --check
       - name: Test release packaging
         run: python3 -m unittest discover -s scripts -p 'test_*.py'
       - name: Validate release and local-build Compose configuration
         run: |
           task_dir=$(mktemp -d)
           trap 'rm -rf "$task_dir"' EXIT
+          docker compose -f deploy/nas/docker-compose.yaml config --quiet
           sh deploy/nas/generate-env.sh "$task_dir/.env"
           docker compose --env-file "$task_dir/.env" -f deploy/nas/docker-compose.yaml config --quiet
           RELAY_IMAGE=relay-service:local sh deploy/nas/generate-env.sh "$task_dir/local.env"

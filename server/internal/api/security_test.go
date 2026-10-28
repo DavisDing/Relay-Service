@@ -8,7 +8,94 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"relayservice/internal/access"
+	"relayservice/internal/storage"
 )
+
+func TestAutomaticOriginUsesRequestHostAndIgnoresForwardedHeaders(t *testing.T) {
+	store := storage.NewMemory()
+	defer store.Close()
+	a, _ := access.New(store, make([]byte, 32), "", false)
+	for _, tc := range []struct {
+		host, origin, forwarded string
+		secure                  bool
+		want                    int
+	}{
+		{"192.168.1.20:8787", "http://192.168.1.20:8787", "", false, 401},
+		{"nas.local:8888", "http://nas.local:8888", "", false, 401},
+		{"[fd00::20]:8787", "http://[fd00::20]:8787", "", false, 401},
+		{"relay.example.test", "https://relay.example.test", "", true, 401},
+		{"nas.local:8787", "https://attacker.test", "attacker.test", false, 403},
+		{"nas.local:8787", "http://nas.local:9999", "", false, 403},
+		{"nas.local:8787", "", "", false, 403},
+		{"nas.local:8787", "null", "", false, 403},
+		{"nas.local:8787", "https://nas.local:8787", "", false, 403},
+	} {
+		h := New(store, a, nil, Options{SecureCookies: tc.secure})
+		r := httptest.NewRequest("POST", "http://"+tc.host+"/api/v1/auth/login", strings.NewReader(`{"username":"admin","password":"wrong password for test"}`))
+		r.Header.Set("Origin", tc.origin)
+		r.Header.Set("X-Forwarded-Host", tc.forwarded)
+		r.Header.Set("X-Forwarded-Proto", "https")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != tc.want {
+			t.Fatalf("host=%q origin=%q status=%d want=%d body=%s", tc.host, tc.origin, w.Code, tc.want, w.Body.String())
+		}
+	}
+}
+
+func TestTemporaryLoginIsRestrictedUntilPermanentPasswordIsSet(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemory()
+	defer store.Close()
+	a, _ := access.New(store, make([]byte, 32), "", false)
+	initial := strings.Repeat("a", 64)
+	if _, err := a.EnsureInitialAdministrator(ctx, initial); err != nil {
+		t.Fatal(err)
+	}
+	h := New(store, a, nil, Options{})
+	call := func(method, path, body string, cookies []*http.Cookie, csrf bool) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, "http://nas.local:8787"+path, strings.NewReader(body))
+		r.Header.Set("Origin", "http://nas.local:8787")
+		for _, c := range cookies {
+			r.AddCookie(c)
+			if csrf && c.Name == "relay_csrf" {
+				r.Header.Set("X-Relay-CSRF", c.Value)
+			}
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	login := call("POST", "/api/v1/auth/login", `{"username":"admin","password":"`+initial+`"}`, nil, false)
+	if login.Code != 200 {
+		t.Fatalf("login: %d %s", login.Code, login.Body.String())
+	}
+	cookies := login.Result().Cookies()
+	me := call("GET", "/api/v1/auth/me", "", cookies, false)
+	if me.Code != 200 || !strings.Contains(me.Body.String(), `"must_change_password":true`) {
+		t.Fatalf("me: %d %s", me.Code, me.Body.String())
+	}
+	for _, path := range []string{"/services", "/alerts", "/devices", "/diagnostic"} {
+		if w := call("GET", "/api/v1"+path, "", cookies, false); w.Code != 403 {
+			t.Fatalf("temporary session accessed %s: %d", path, w.Code)
+		}
+	}
+	body := `{"username":"owner","password":"new permanent password"}`
+	if w := call("POST", "/api/v1/auth/password", body, cookies, false); w.Code != 403 {
+		t.Fatalf("password change bypassed CSRF: %d", w.Code)
+	}
+	if w := call("POST", "/api/v1/auth/password", body, cookies, true); w.Code != 200 {
+		t.Fatalf("password change: %d %s", w.Code, w.Body.String())
+	}
+	if w := call("GET", "/api/v1/auth/me", "", cookies, false); w.Code != 401 {
+		t.Fatalf("temporary session survived: %d", w.Code)
+	}
+	if w := call("POST", "/api/v1/auth/login", body, nil, false); w.Code != 200 {
+		t.Fatalf("permanent login: %d", w.Code)
+	}
+}
 
 func TestCookieWritesRequireCSRF(t *testing.T) {
 	f := newFixture(t)

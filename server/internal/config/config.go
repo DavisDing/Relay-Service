@@ -2,6 +2,7 @@
 package config
 
 import (
+	"bufio"
 	"encoding/hex"
 	"fmt"
 	"net"
@@ -18,6 +19,7 @@ type Config struct {
 	MigrationDatabaseURL string
 	EncryptionKey        []byte
 	BootstrapToken       string
+	InitialPassword      string
 	SecureCookies        bool
 	LogLevel             string
 }
@@ -29,6 +31,21 @@ func Load() (Config, error) { return LoadWith(os.Getenv) }
 func DatabaseURLFromEnvironment() string { return os.Getenv("RELAY_DATABASE_URL") }
 
 func LoadWith(getenv func(string) string) (Config, error) {
+	// NAS deployments persist generated secrets separately from the database.
+	// Explicit environment settings retain precedence for existing installations.
+	if path := strings.TrimSpace(getenv("RELAY_DEPLOYMENT_FILE")); path != "" {
+		values, err := readDeploymentFile(path)
+		if err != nil {
+			return Config{}, err
+		}
+		original := getenv
+		getenv = func(name string) string {
+			if value := original(name); value != "" {
+				return value
+			}
+			return values[name]
+		}
+	}
 	get := func(key, defaultValue string) string {
 		value := strings.TrimSpace(getenv(key))
 		if value == "" {
@@ -36,18 +53,22 @@ func LoadWith(getenv func(string) string) (Config, error) {
 		}
 		return value
 	}
-	c := Config{ListenAddr: get("RELAY_LISTEN_ADDR", ":8787"), PublicURL: get("RELAY_PUBLIC_URL", "http://localhost:8787"), DatabaseURL: getenv("RELAY_DATABASE_URL"), BootstrapToken: getenv("RELAY_BOOTSTRAP_TOKEN"), LogLevel: get("RELAY_LOG_LEVEL", "info")}
+	c := Config{ListenAddr: get("RELAY_LISTEN_ADDR", ":8787"), PublicURL: get("RELAY_PUBLIC_URL", ""), DatabaseURL: getenv("RELAY_DATABASE_URL"), BootstrapToken: getenv("RELAY_BOOTSTRAP_TOKEN"), InitialPassword: getenv("RELAY_INITIAL_PASSWORD"), LogLevel: get("RELAY_LOG_LEVEL", "info")}
 	_, listenPort, err := net.SplitHostPort(c.ListenAddr)
 	portNumber, portErr := strconv.Atoi(listenPort)
 	if err != nil || portErr != nil || portNumber < 1 || portNumber > 65535 {
 		return c, fmt.Errorf("RELAY_LISTEN_ADDR must be a host:port")
 	}
-	u, err := url.Parse(c.PublicURL)
-	if err != nil || u.Host == "" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") || (u.Scheme != "http" && u.Scheme != "https") {
-		return c, fmt.Errorf("RELAY_PUBLIC_URL must be an HTTP(S) origin without path or credentials")
+	var publicHTTPS bool
+	if c.PublicURL != "" {
+		u, err := url.Parse(c.PublicURL)
+		if err != nil || u.Host == "" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") || (u.Scheme != "http" && u.Scheme != "https") {
+			return c, fmt.Errorf("RELAY_PUBLIC_URL must be an HTTP(S) origin without path or credentials")
+		}
+		c.PublicURL = u.Scheme + "://" + u.Host
+		publicHTTPS = u.Scheme == "https"
 	}
-	c.PublicURL = u.Scheme + "://" + u.Host
-	c.SecureCookies = u.Scheme == "https"
+	c.SecureCookies = publicHTTPS
 	if raw := strings.TrimSpace(getenv("RELAY_SECURE_COOKIES")); raw != "" {
 		secure, err := strconv.ParseBool(raw)
 		if err != nil {
@@ -55,7 +76,7 @@ func LoadWith(getenv func(string) string) (Config, error) {
 		}
 		c.SecureCookies = secure
 	}
-	if c.SecureCookies != (u.Scheme == "https") {
+	if c.PublicURL != "" && c.SecureCookies != publicHTTPS {
 		return c, fmt.Errorf("RELAY_SECURE_COOKIES must match the public URL scheme")
 	}
 	if err := ValidateDatabaseURL(c.DatabaseURL); err != nil {
@@ -77,12 +98,39 @@ func LoadWith(getenv func(string) string) (Config, error) {
 		return c, fmt.Errorf("RELAY_BOOTSTRAP_TOKEN must be a random token of at least 32 bytes")
 	}
 	c.EncryptionKey = key
+	if c.InitialPassword != "" && (len(c.InitialPassword) < 32 || len(c.InitialPassword) > 1024 || strings.Contains(c.InitialPassword, "replace-with")) {
+		return c, fmt.Errorf("RELAY_INITIAL_PASSWORD must be a unique random password of at least 32 bytes")
+	}
 	switch c.LogLevel {
 	case "debug", "info", "warn", "error":
 	default:
 		return c, fmt.Errorf("RELAY_LOG_LEVEL must be debug, info, warn or error")
 	}
 	return c, nil
+}
+
+// This is a restricted data file, never shell input. Do not include raw values
+// or parser errors in diagnostics, because they could contain credentials.
+func readDeploymentFile(path string) (map[string]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read RELAY_DEPLOYMENT_FILE; restore the deployment secrets volume")
+	}
+	defer f.Close()
+	allowed := map[string]bool{"RELAY_DATABASE_URL": true, "RELAY_MIGRATION_DATABASE_URL": true, "RELAY_ENCRYPTION_KEY": true, "RELAY_INITIAL_PASSWORD": true}
+	values := make(map[string]string)
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		name, value, ok := strings.Cut(scanner.Text(), "=")
+		if !ok || !allowed[name] || value == "" || values[name] != "" {
+			return nil, fmt.Errorf("invalid RELAY_DEPLOYMENT_FILE; refusing to replace stored secrets")
+		}
+		values[name] = value
+	}
+	if scanner.Err() != nil || len(values) != len(allowed) {
+		return nil, fmt.Errorf("incomplete RELAY_DEPLOYMENT_FILE; restore the deployment secrets volume")
+	}
+	return values, nil
 }
 
 func ValidateDatabaseURL(raw string) error {

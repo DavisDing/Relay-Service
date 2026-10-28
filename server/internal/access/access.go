@@ -142,15 +142,18 @@ func validUsername(value string) bool {
 }
 
 type administrator struct {
-	ID           string `json:"id"`
-	Username     string `json:"username"`
-	Salt         string `json:"salt"`
-	PasswordHash string `json:"password_hash"`
+	ID                 string `json:"id"`
+	Username           string `json:"username"`
+	Salt               string `json:"salt"`
+	PasswordHash       string `json:"password_hash"`
+	MustChangePassword bool   `json:"must_change_password,omitempty"`
+	CredentialVersion  uint64 `json:"credential_version,omitempty"`
 }
 type session struct {
-	ID        string    `json:"id"`
-	AdminID   string    `json:"admin_id"`
-	ExpiresAt time.Time `json:"expires_at"`
+	ID                string    `json:"id"`
+	AdminID           string    `json:"admin_id"`
+	ExpiresAt         time.Time `json:"expires_at"`
+	CredentialVersion uint64    `json:"credential_version,omitempty"`
 }
 type deviceRecord struct {
 	Device      Device    `json:"device"`
@@ -167,8 +170,9 @@ type Device struct {
 	RevokedAt *time.Time `json:"revoked_at,omitempty"`
 }
 type Principal struct {
-	ID   string `json:"id"`
-	Role string `json:"role"`
+	ID                 string `json:"id"`
+	Role               string `json:"role"`
+	MustChangePassword bool   `json:"must_change_password,omitempty"`
 }
 
 type Pairing struct {
@@ -232,8 +236,17 @@ func (s *Service) Login(ctx context.Context, username, password string) (string,
 	if err != nil {
 		return "", err
 	}
-	item := session{ID: admin.ID, AdminID: admin.ID, ExpiresAt: s.now().Add(sessionTTL)}
-	if err := s.store.Update(ctx, func(tx storage.Tx) error { return tx.Put(sessionBucket, digest, item) }); err != nil {
+	item := session{ID: admin.ID, AdminID: admin.ID, ExpiresAt: s.now().Add(sessionTTL), CredentialVersion: admin.CredentialVersion}
+	if err := s.store.Update(ctx, func(tx storage.Tx) error {
+		var current administrator
+		if err := tx.Get(adminBucket, admin.ID, &current); err != nil {
+			return err
+		}
+		if current.CredentialVersion != admin.CredentialVersion {
+			return ErrUnauthorized
+		}
+		return tx.Put(sessionBucket, digest, item)
+	}); err != nil {
 		return "", err
 	}
 	return token, nil
@@ -292,13 +305,19 @@ func (s *Service) Authenticate(ctx context.Context, token string) (Principal, er
 	}
 	digest := digestToken(token)
 	var adminSession session
-	err := s.store.View(ctx, func(tx storage.Tx) error { return tx.Get(sessionBucket, digest, &adminSession) })
+	var admin administrator
+	err := s.store.View(ctx, func(tx storage.Tx) error {
+		if err := tx.Get(sessionBucket, digest, &adminSession); err != nil {
+			return err
+		}
+		return tx.Get(adminBucket, adminSession.AdminID, &admin)
+	})
 	if err == nil {
-		if !s.now().Before(adminSession.ExpiresAt) {
+		if !s.now().Before(adminSession.ExpiresAt) || adminSession.CredentialVersion != admin.CredentialVersion {
 			_ = s.store.Update(ctx, func(tx storage.Tx) error { return tx.Delete(sessionBucket, digest) })
 			return Principal{}, ErrExpired
 		}
-		return Principal{ID: adminSession.AdminID, Role: "admin"}, nil
+		return Principal{ID: adminSession.AdminID, Role: "admin", MustChangePassword: admin.MustChangePassword}, nil
 	}
 	if !errors.Is(err, storage.ErrNotFound) {
 		return Principal{}, err

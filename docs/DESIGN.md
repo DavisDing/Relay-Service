@@ -692,7 +692,8 @@ Relay 的余额采集 ──受控只读适配器──> 已配置供应商账�
 
 #### 10.9.5 鉴权、秘密与网络安全实现方向
 
-- 单管理员首次初始化需要一次性部署侧随机令牌，明文不进入普通日志、不通过未鉴权公网页面泄露；服务端串行完成首次创建后永久关闭初始化入口。密码用 Argon2id 单向校验；重置为受控部署操作，不能靠暴露匿名“重置管理员”接口。
+- 按 D-18，默认 NAS 首装自动创建受限 admin，实例独立临时密码仅在未完成设置时输出到部署日志。首次登录只能设置正式账号/密码或退出，业务 API 拒绝受限会话；完成后增加凭据版本，使所有临时会话失效，重启不重置已完成账号、不再输出临时密码。密码用 Argon2id 单向校验；旧显式环境 bootstrap 令牌模式保留，不作为默认部署步骤。
+- 默认直连不配置 public URL，按请求 Host/协议验证 Origin；固定反代 origin 可显式设置，HTTPS Secure Cookie 随固定 URL 或显式开关启用，不盲目信任代理头。默认 Compose 内嵌 PostgreSQL 包装/角色脚本，自动秘密以私有文件持久化至独立 relay-secrets 卷，Relay 只读挂载；已有数据库缺失密钥时拒绝重新生成。
 - Web 使用随机不可预测的 opaque session Cookie，服务端仅保存会话 token 摘要/期限/撤销状态；同源请求，启用 HttpOnly/SameSite、写操作 CSRF/Origin 校验。HTTPS 部署启用 Secure Cookie，不把 Cookie 放 localStorage，不因 proxy headers 绕过鉴权。
 - Mac 配对码短期/单次/限尝试，兑换高熵设备 token；数据库保存 token 摘要，Mac 存 Keychain，配对返回服务身份/权限。撤销后服务端立即拒绝，客户端保留缓存并明确凭据失效。不用长寿命无状态 JWT 代替可立即撤销的设备身份。
 - 需调用外部服务的秘密不能只做 hash：建议用 Go 标准库 `crypto/aes` + `crypto/cipher` 的 AES-GCM，独立随机 nonce，附带 secret ID/用途/密钥版本作为关联数据；密文记录与外部挂载的加密主密钥分开。Relay 主密钥、LiteLLM Salt Key、数据库密码、发布签名私钥不混用；常规升级保留，轮换使用版本化重加密/核验流程。丢失 Relay 主密钥时允许重配凭据但不可宣称还能解密原值；备份依赖见 T-02/D-10。

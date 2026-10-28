@@ -24,6 +24,7 @@
 |---|---|---|
 | GET `/api/v1/info` | 公开 | 最小Relay ID、版本、capabilities、initialized |
 | POST `/api/v1/auth/bootstrap` | 公开，配置origin | `{token,username,password}`，仅未初始化库可成功；密码至少12字符 |
+| POST `/api/v1/auth/password` | 受限管理员会话，Origin/CSRF | `{username,password}`，仅首次强制改密；成功使全部临时会话失效，重新登录 |
 | POST `/api/v1/auth/login` | 公开，配置origin | `{username,password}`；只在Cookie设置会话，响应不含令牌 |
 | POST `/api/v1/auth/logout` | 管理员 | 撤销当前会话并清Cookie |
 | GET `/api/v1/auth/me` | 管理员/设备 | 当前principal `{id,role}` |
@@ -49,7 +50,7 @@
 
 服务输入字段：`id? name kind base_url ui_url? group? enabled interval_seconds timeout_seconds failure_threshold recovery_threshold allow_private token? clear_token? generation`。新建generation=0，更新必须使用读到的当前值。kind为 `litellm/hermes/workbuddy2api/openwebui/ollama/metacubexd/http/tcp`。基础地址只能是HTTP(S) origin，TCP kind也从该origin解析主机/端口；没有可配置的HTTP方法/路径/请求体。参数范围和证据见COMPATIBILITY。`token`为空保留已有秘密，`clear_token=true`显式清除，不允许同时提供新秘密；秘密从不响应回显；目标地址改变时需重新提供或显式清除原凭据。
 
-Cookie写操作校验已配置origin与双提交 `relay_csrf` Cookie/`X-Relay-CSRF` header。bootstrap/login在未有会话时仅校验origin；Cookie会话采用HttpOnly、SameSite=Strict和匹配部署HTTPS的Secure标志。纯Bearer设备请求不依赖浏览器origin，但不得写管理员资源；设备仅允许读取及更新自己的已读位置。服务端不信任客户端forwarded host/proto来推导允许origin。
+Cookie写操作校验origin（默认匹配请求Host/协议，或显式固定origin）与双提交 `relay_csrf` Cookie/`X-Relay-CSRF` header。bootstrap/login在未有会话时仅校验origin；Cookie会话采用HttpOnly、SameSite=Strict和匹配部署HTTPS的Secure标志。纯Bearer设备请求不依赖浏览器origin，但不得写管理员资源；设备仅允许读取及更新自己的已读位置。服务端不信任客户端forwarded host/proto来推导允许origin。
 
 JSON请求最大64KiB，未知字段/多JSON/非对象拒绝。常见错误为400输入、401无效或过期凭据、403权限/CSRF/origin、404不存在、409generation/暂停冲突、413过大、415媒体类型、429认证尝试限制、503请求截止、500内部错误。登录连续8次失败锁5分钟；配对失败也有限制。错误文本不输出数据库URL/上游响应/秘密。
 
@@ -82,3 +83,5 @@ PostgreSQL初版为relay_records JSONB记录与relay_sequences普通计数表；
 `server/` 默认 Go 构建不依赖前端产物，Web 请求返回 503 并给出构建提示；可直接运行后端测试/vet。完整 Web 构建必须先运行 `web/` 的 `pnpm build`，再使用 `-tags webassets`；Dockerfile 与 CI 的嵌入验证均明确选择此标签。发布路径缺少真实 `dist` 时编译失败，已有真实 HTML/哈希资源/缓存策略验证保留在该标签下，不能用纯后端测试替代。
 
 Web 总览驾驶舱的状态分布与计数来自已同步服务，过期/未观测不计为成功；需要关注区包含未恢复事件、失败和待观测服务。分组概况与筛选仅改变视图，不改变检查计划。告警仅有当前加载页时不宣称覆盖全部最新事件；全量 FR-W02 八工作区、模型/额度、日志、版本/恢复及容量来源仍未完成。
+
+默认 NAS 部署按 D-18 不要求 public URL；Origin 与请求 Host/协议一致，固定反代 URL 可选，不信任代理头。自动部署文件包含业务/迁移连接、加密密钥和临时密码；数据库先生成并持久化，Relay 只读加载。首次 admin 会话返回 `must_change_password:true`，只放行 me/password/logout，业务 API 返回 403；改密后凭据版本失配的旧会话返回 401。新增 JSON 字段默认零值兼容旧账号，不变更 SQL schema。

@@ -58,10 +58,11 @@ type request struct {
 	s *Server
 }
 type route struct {
-	public bool
-	admin  bool
-	write  bool
-	fn     func(request) (any, int, error)
+	public  bool
+	admin   bool
+	write   bool
+	initial bool
+	fn      func(request) (any, int, error)
 }
 type bootstrapPayload struct {
 	Token    string `json:"token"`
@@ -172,11 +173,22 @@ func (s *Server) routes() {
 		if _, err := rand.Read(csrf); err != nil {
 			return nil, 0, err
 		}
-		http.SetCookie(q.w, &http.Cookie{Name: "relay_session", Value: token, Path: "/", HttpOnly: true, Secure: q.s.options.SecureCookies, SameSite: http.SameSiteStrictMode, Expires: time.Now().Add(12 * time.Hour)})
-		http.SetCookie(q.w, &http.Cookie{Name: "relay_csrf", Value: hex.EncodeToString(csrf), Path: "/", HttpOnly: false, Secure: q.s.options.SecureCookies, SameSite: http.SameSiteStrictMode, Expires: time.Now().Add(12 * time.Hour)})
+		secure := q.s.options.SecureCookies || q.r.TLS != nil
+		http.SetCookie(q.w, &http.Cookie{Name: "relay_session", Value: token, Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode, Expires: time.Now().Add(12 * time.Hour)})
+		http.SetCookie(q.w, &http.Cookie{Name: "relay_csrf", Value: hex.EncodeToString(csrf), Path: "/", HttpOnly: false, Secure: secure, SameSite: http.SameSiteStrictMode, Expires: time.Now().Add(12 * time.Hour)})
 		return map[string]any{"authenticated": true}, http.StatusOK, nil
 	}})
-	s.handle("POST /api/v1/auth/logout", route{admin: true, write: true, fn: func(q request) (any, int, error) {
+	s.handle("POST /api/v1/auth/password", route{admin: true, write: true, initial: true, fn: func(q request) (any, int, error) {
+		var p loginPayload
+		if err := decode(q.r, &p); err != nil {
+			return nil, 0, err
+		}
+		if err := q.s.access.CompleteInitialPassword(q.r.Context(), requestCredential(q.r), p.Username, p.Password); err != nil {
+			return nil, 0, err
+		}
+		return map[string]any{"password_changed": true, "login_required": true}, http.StatusOK, nil
+	}})
+	s.handle("POST /api/v1/auth/logout", route{admin: true, write: true, initial: true, fn: func(q request) (any, int, error) {
 		token := ""
 		cookie, _ := q.r.Cookie("relay_session")
 		if bearerToken(q.r) {
@@ -193,7 +205,7 @@ func (s *Server) routes() {
 		http.SetCookie(q.w, &http.Cookie{Name: "relay_csrf", Value: "", Path: "/", HttpOnly: false, Secure: q.s.options.SecureCookies, SameSite: http.SameSiteStrictMode, MaxAge: -1})
 		return map[string]any{"authenticated": false}, http.StatusOK, nil
 	}})
-	s.handle("GET /api/v1/auth/me", route{fn: func(q request) (any, int, error) { p, _ := principal(q.r.Context()); return p, http.StatusOK, nil }})
+	s.handle("GET /api/v1/auth/me", route{initial: true, fn: func(q request) (any, int, error) { p, _ := principal(q.r.Context()); return p, http.StatusOK, nil }})
 	s.handle("POST /api/v1/devices/pair", route{public: true, write: false, fn: func(q request) (any, int, error) {
 		var p pairPayload
 		if err := decode(q.r, &p); err != nil {
@@ -378,6 +390,10 @@ func (s *Server) handle(pattern string, rt route) {
 			writeError(w, http.StatusForbidden, "forbidden", "Administrator access required")
 			return
 		}
+		if p.MustChangePassword && !rt.initial && !rt.public {
+			writeError(w, http.StatusForbidden, "password_change_required", "Set a permanent password before using Relay")
+			return
+		}
 		ctx := context.WithValue(r.Context(), principalKey{}, p)
 		data, status, err := rt.fn(request{r: r.WithContext(ctx), w: w, s: s})
 		if err != nil {
@@ -391,6 +407,16 @@ func (s *Server) handle(pattern string, rt route) {
 		}
 		s.successStatus(w, r, id, data, status)
 	})
+}
+
+func requestCredential(r *http.Request) string {
+	if bearerToken(r) {
+		return strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+	}
+	if cookie, err := r.Cookie("relay_session"); err == nil {
+		return cookie.Value
+	}
+	return ""
 }
 
 type principalKey struct{}
@@ -408,7 +434,7 @@ func (s *Server) sameOrigin(r *http.Request) bool {
 	if expected == "" {
 		expected = r.Host
 		scheme := "http"
-		if r.TLS != nil {
+		if r.TLS != nil || s.options.SecureCookies {
 			scheme = "https"
 		}
 		expected = scheme + "://" + expected

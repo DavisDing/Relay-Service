@@ -1,9 +1,57 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestPublicURLIsOptionalForDirectNASAccess(t *testing.T) {
+	settings := map[string]string{"RELAY_DATABASE_URL": "postgres://app:password@postgres/relay", "RELAY_ENCRYPTION_KEY": strings.Repeat("ab", 32)}
+	c, err := LoadWith(func(k string) string { return settings[k] })
+	if err != nil || c.PublicURL != "" || c.SecureCookies {
+		t.Fatalf("direct NAS config=%+v err=%v", c, err)
+	}
+	settings["RELAY_SECURE_COOKIES"] = "true"
+	c, err = LoadWith(func(k string) string { return settings[k] })
+	if err != nil || !c.SecureCookies {
+		t.Fatalf("HTTPS proxy without fixed host: %v", err)
+	}
+}
+
+func TestDeploymentFileRestoresGeneratedSecretsWithoutShellEvaluation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "deployment.env")
+	contents := "RELAY_DATABASE_URL=postgres://app:original-secret@postgres:5432/relay?sslmode=disable\nRELAY_MIGRATION_DATABASE_URL=postgres://migrator:original-secret@postgres:5432/relay?sslmode=disable\nRELAY_ENCRYPTION_KEY=" + strings.Repeat("ab", 32) + "\nRELAY_INITIAL_PASSWORD=" + strings.Repeat("a", 64) + "\n"
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	settings := map[string]string{"RELAY_DEPLOYMENT_FILE": path}
+	get := func(k string) string { return settings[k] }
+	c, err := LoadWith(get)
+	if err != nil || len(c.EncryptionKey) != 32 || len(c.InitialPassword) != 64 {
+		t.Fatalf("generated config error=%v", err)
+	}
+	settings["RELAY_ENCRYPTION_KEY"] = strings.Repeat("cd", 32)
+	c, err = LoadWith(get)
+	if err != nil || c.EncryptionKey[0] != 0xcd {
+		t.Fatalf("explicit override error=%v", err)
+	}
+	for _, invalid := range []string{contents + "UNKNOWN=original-secret\n", strings.Replace(contents, "RELAY_INITIAL_PASSWORD=", "RELAY_ENCRYPTION_KEY=", 1), "RELAY_DATABASE_URL=$(original-secret)\n"} {
+		if err := os.WriteFile(path, []byte(invalid), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadWith(get); err == nil || strings.Contains(err.Error(), "original-secret") {
+			t.Fatalf("invalid deployment file error=%v", err)
+		}
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadWith(get); err == nil {
+		t.Fatal("missing secrets were accepted")
+	}
+}
 
 func TestConfigurationRejectsInvalidSecretsAndCookieMismatch(t *testing.T) {
 	settings := map[string]string{"RELAY_DATABASE_URL": "postgres://relay:password@postgres:5432/relay?sslmode=disable", "RELAY_ENCRYPTION_KEY": strings.Repeat("ab", 32), "RELAY_BOOTSTRAP_TOKEN": strings.Repeat("x", 32), "RELAY_PUBLIC_URL": "https://relay.example.test"}

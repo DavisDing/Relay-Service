@@ -31,6 +31,6 @@ go vet -tags webassets ./...
 
 从纯源码检出可直接在 `server/` 执行 `go test -race ./...` 和 `go vet ./...`，无需前端产物。默认是后端开发构建，Web 请求明确返回 503；完整运行使用 `pnpm build` 后 `go run -tags webassets ./cmd/relay`。Docker/发布构建固定带 `webassets`，缺少真实页面资源时编译失败。
 
-启动需要真实 PostgreSQL、独立角色与环境配置，按 NAS 部署文档启动时检查并自动初始化；测试默认使用内存Store/本机HTTP fixture。数据库集成测试需专用 `_test` 数据库和显式 `RELAY_TEST_DATABASE_URL`，默认跳过。
+NAS 默认导入自包含 Compose 即可，不需要填写宿主 IP 或预生成秘密；内部密码/密钥持久保存，临时 admin 密码在 Relay 容器日志中，首次登录必须设置正式密码。新配置需要配套的新镜像。启动使用独立 PostgreSQL/角色，按 NAS 部署文档检查并自动初始化；测试默认使用内存Store/本机HTTP fixture。数据库集成测试需专用 `_test` 数据库和显式 `RELAY_TEST_DATABASE_URL`，默认跳过。
 
 已发布 [v0.1.0-alpha.1](https://github.com/DavisDing/Relay-Service/releases/tag/v0.1.0-alpha.1) 开发预览和 GHCR 双架构镜像，提供带摘要的完整 NAS 部署包。CI、Compose 解析和 amd64 容器基础检查通过；arm64 只构建。真实数据库、UGOS、浏览器与六服务安装版本尚未验收。workbuddy2api 安全检查合同与 MetaCubeXD 变体需核对，完整首期能力见需求文档，不能将本版视为全部完成。

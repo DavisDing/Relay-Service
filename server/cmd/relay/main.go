@@ -109,12 +109,23 @@ func run() error {
 	if err := db.Ping(connectCtx); err != nil {
 		return fmt.Errorf("verify Relay schema before serving: %w", err)
 	}
-	if cfg.BootstrapToken == "" {
+	if cfg.BootstrapToken == "" && cfg.InitialPassword == "" {
 		slog.Warn("administrator bootstrap is disabled")
 	}
 	accessSvc, err := access.New(db, cfg.EncryptionKey, cfg.BootstrapToken, cfg.SecureCookies)
 	if err != nil {
 		return err
+	}
+	if cfg.InitialPassword != "" {
+		pending, err := accessSvc.EnsureInitialAdministrator(connectCtx, cfg.InitialPassword)
+		if err != nil {
+			return fmt.Errorf("prepare initial administrator: %w", err)
+		}
+		if pending {
+			// Deliberate deployment-only credential display. Never expose this
+			// password through HTTP, diagnostics or normal structured logging.
+			fmt.Fprintf(os.Stderr, "Relay first login — username: admin; temporary password: %s\nChange this password in the browser before using Relay.\n", cfg.InitialPassword)
+		}
 	}
 	engine := monitor.New(db, accessSvc)
 	workerCtx, workerCancel := context.WithCancel(ctx)

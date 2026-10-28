@@ -1,4 +1,4 @@
-export type Principal = { id: string; role: string };
+export type Principal = { id: string; role: string; must_change_password?: boolean };
 export type Check = {
   id: string;
   cursor: string;

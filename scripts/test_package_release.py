@@ -15,7 +15,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 IMAGE = 'ghcr.io/davisding/relay-service@sha256:' + 'ab' * 32
 TAG = 'v0.1.0-rc.1'
-INPUTS = ('deploy/nas/docker-compose.yaml', 'deploy/nas/init-db/001-roles.sh',
+INPUTS = ('deploy/nas/docker-compose.yaml', 'deploy/nas/init-db/001-roles.sh', 'deploy/nas/start-postgres.sh',
           'deploy/nas/.env.example', 'deploy/nas/generate-env.sh', 'scripts/package-release.sh')
 SECRETS = ('POSTGRES_SUPERUSER_PASSWORD', 'RELAY_DB_PASSWORD', 'RELAY_MIGRATOR_PASSWORD',
            'RELAY_APP_PASSWORD', 'RELAY_BOOTSTRAP_TOKEN', 'RELAY_ENCRYPTION_KEY')
@@ -78,21 +78,23 @@ class PackageReleaseTests(unittest.TestCase):
             self.assertEqual(hashlib.sha256((self.output / name).read_bytes()).hexdigest(), digest)
         self.assertEqual({str(p.relative_to(nas)) for p in nas.rglob('*') if p.is_file()},
                          {'.env.example', 'docker-compose.yaml', 'generate-env.sh',
-                          'init-db/001-roles.sh', 'README.txt'})
+                          'init-db/001-roles.sh', 'start-postgres.sh', 'README.txt'})
         compose = (nas / 'docker-compose.yaml').read_text()
         self.assertNotRegex(compose, r'(?m)^\s*build\s*:')
-        self.assertEqual(compose.count('${RELAY_IMAGE:?'), 1)
+        self.assertEqual(compose.count('${RELAY_IMAGE:-' + IMAGE + '}'), 1)
         self.assertNotIn('relay-migrate:', compose)
         relay_section = compose.split('  relay:\n', 1)[1].split('  postgres:\n', 1)[0]
-        self.assertIn('RELAY_DATABASE_URL: postgres://relay_app:', relay_section)
-        self.assertIn('RELAY_MIGRATION_DATABASE_URL: postgres://relay_migrator:', relay_section)
+        self.assertIn('RELAY_DEPLOYMENT_FILE: /relay-secrets/current/deployment.env', relay_section)
+        self.assertIn('relay-secrets:/relay-secrets:ro', relay_section)
+        self.assertNotIn('${RELAY_APP_PASSWORD:?', relay_section)
         self.assertNotIn('command: ["migrate"]', relay_section)
         self.assertNotIn('service_completed_successfully', compose)
         self.assertNotIn('docker-compose.init.yaml', (nas / 'README.txt').read_text())
         self.assertIn('automatically applies only pending SQL files', (nas / 'README.txt').read_text())
         self.assertIn('image: postgres:latest', compose)
         self.assertIn('relay-postgres:/var/lib/postgresql', compose)
-        self.assertIn('./init-db/001-roles.sh:', compose)
+        self.assertNotIn('./init-db/001-roles.sh:', compose)
+        self.assertIn('# BEGIN GENERATED POSTGRES STARTUP', compose)
         self.assertTrue((nas / 'init-db/001-roles.sh').is_file())
         self.assertEqual(stat.S_IMODE((nas / 'init-db/001-roles.sh').stat().st_mode), 0o644)
         self.assertEqual(stat.S_IMODE((nas / 'generate-env.sh').stat().st_mode), 0o755)
@@ -150,7 +152,7 @@ class PackageReleaseTests(unittest.TestCase):
 
     def test_real_secret_in_template_is_refused(self):
         template = self.root / 'deploy/nas/.env.example'
-        template.write_text(template.read_text().replace('RELAY_ENCRYPTION_KEY=replace-with-64-hex-characters',
+        template.write_text(template.read_text().replace('RELAY_ENCRYPTION_KEY=',
                                                          'RELAY_ENCRYPTION_KEY=' + 'de' * 32))
         result = self.package()
         self.assertNotEqual(result.returncode, 0)

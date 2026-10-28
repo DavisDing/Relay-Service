@@ -37,6 +37,7 @@ if os.path.lexists(output):
 # Do not walk the checkout: actual .env, dumps, keys and source can never enter the bundle.
 allowlist = {
     'docker-compose.yaml': ('deploy/nas/docker-compose.yaml', 0o644),
+    'start-postgres.sh': ('deploy/nas/start-postgres.sh', 0o644),
     'init-db/001-roles.sh': ('deploy/nas/init-db/001-roles.sh', 0o644),
     'generate-env.sh': ('deploy/nas/generate-env.sh', 0o755),
     '.env.example': ('deploy/nas/.env.example', 0o644),
@@ -55,7 +56,7 @@ source_image = '${RELAY_IMAGE:-ghcr.io/davisding/relay-service:latest}'
 if compose.count(source_image) != 1:
     sys.exit('The source Relay service must default to the self-testing latest image')
 # Versioned assets remain reproducible even while the source defaults to latest.
-compose = compose.replace(source_image, '${RELAY_IMAGE:?set RELAY_IMAGE to the release image digest}')
+compose = compose.replace(source_image, '${RELAY_IMAGE:-' + image + '}')
 payload['docker-compose.yaml'] = (compose.encode(), 0o644)
 if 'image: postgres:latest' not in compose:
     sys.exit('The confirmed PostgreSQL latest policy must be preserved')
@@ -67,7 +68,7 @@ template = re.sub(r'^RELAY_IMAGE=.*$', f'RELAY_IMAGE={image}', template, flags=r
 secret_names = ('POSTGRES_SUPERUSER_PASSWORD', 'RELAY_DB_PASSWORD', 'RELAY_MIGRATOR_PASSWORD', 'RELAY_APP_PASSWORD', 'RELAY_BOOTSTRAP_TOKEN', 'RELAY_ENCRYPTION_KEY')
 for name in secret_names:
     values = re.findall(rf'^{name}=(.*)$', template, re.MULTILINE)
-    if len(values) != 1 or not values[0].startswith('replace-with-'):
+    if len(values) != 1 or (values[0] and not values[0].startswith('replace-with-')):
         sys.exit(f'Release template must contain a placeholder, never a secret: {name}')
 payload['.env.example'] = (template.encode(), 0o644)
 readme = f'''Relay Service {tag} — NAS deployment bundle
@@ -78,23 +79,29 @@ This bundle needs no source checkout or local Go/Node build. It does not include
 actual credentials, a database backup, or the image itself. Docker pulls the image
 from GitHub Packages; package access and network availability must be available.
 
-1. Extract this archive into one folder. Keep docker-compose.yaml, .env.example,
-   generate-env.sh and init-db/001-roles.sh together.
-2. Install Docker Compose and openssl. The existing AI_NETWORK_NAME Docker network
-   must already exist. Run: sh generate-env.sh .env
-   Fresh secrets are generated with mode 600. The published Relay digest stays fixed.
-3. Edit .env for your NAS binding, public URL and existing Docker network. HTTPS
-   public URLs require RELAY_SECURE_COOKIES=true. Default binding is loopback only.
-4. Import docker-compose.yaml into UGREEN Docker Projects, or run:
-   docker compose --env-file .env -f docker-compose.yaml up -d
+1. Import docker-compose.yaml directly. Its database startup scripts are embedded.
+   The other files are optional reference/configuration helpers.
+2. The existing AI_NETWORK_NAME Docker network defaults to ai-network.
+   No .env, host IP, openssl or manual secret generation is needed. This
+   versioned Compose defaults to the published digest. Its optional .env.example
+   contains blank secret overrides and needs no editing.
+3. Import docker-compose.yaml into UGREEN Docker Projects, or run:
+   docker compose -f docker-compose.yaml up -d
+   PostgreSQL generates secrets in the relay-secrets volume on first startup.
    PostgreSQL initializes roles/database on an empty volume. Relay then checks its
    schema and automatically applies only pending SQL files before serving HTTP.
    Existing schema/data are kept. Unknown history or initialization errors stop startup.
    Normal deployment has only relay and postgres; no separate initialization command.
    This development baseline targets a fresh database; no legacy-schema backfill is included.
    For future compatible updates, back up and stop Relay before recreating it.
-5. Open RELAY_PUBLIC_URL, initialize the administrator with the generated bootstrap
-   token, then log in. Preserve the encryption key separately with protected backups.
+4. Open http://<NAS address>:8787. Log in as admin with the instance-specific
+   temporary password displayed in the Relay container logs. Set your permanent
+   username/password before accessing any monitoring or administration API.
+   After the change, all temporary sessions and the temporary password are invalid.
+5. HTTPS reverse proxies may set RELAY_PUBLIC_URL=https://<domain>; Secure cookies
+   follow that URL. Direct LAN access needs no public URL. Forwarded headers are
+   never trusted automatically. Preserve both relay-postgres and relay-secrets
+   volumes with protected backups; losing the key prevents credential decryption.
 
 PostgreSQL follows the user's confirmed postgres:latest policy. Record its actual
 version/digest; a major database upgrade still requires a migration procedure.
