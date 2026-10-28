@@ -130,6 +130,7 @@ func New(store storage.Store, accessService *access.Service, monitorEngine *moni
 
 func (s *Server) routes() {
 	s.databaseRoutes()
+	s.networkRoutes()
 	s.mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "live"})
 	})

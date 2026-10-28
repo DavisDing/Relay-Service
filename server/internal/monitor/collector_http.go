@@ -164,7 +164,7 @@ func (e *Engine) execute(ctx context.Context, rec serviceRecord) observation {
 			return fetchFailure(err)
 		}
 		d.Source = path
-		result = positive("provider_reported", "已读取服务商公开状态或站方探针；未执行本地模型推理。")
+		result = positive("provider_reported", "已读取服务商公开状态或站方探针，详见各组件状态。")
 		if d.Unhealthy {
 			result = failure(StatusUnhealthy, "provider_reported", "服务商公开状态或站方探针报告异常，详见组件证据。")
 		} else if d.Unknown {

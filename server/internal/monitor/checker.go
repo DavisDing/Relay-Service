@@ -118,7 +118,7 @@ func (e *Engine) executeBasic(ctx context.Context, rec serviceRecord) observatio
 			return networkFailure(ctx, err)
 		}
 		conn.Close()
-		return positive("connectivity_only", "TCP 连接成功；应用就绪状态和推理能力未测试。")
+		return positive("connectivity_only", "TCP 连接成功；尚未检查应用就绪状态。")
 	}
 	u.Path = endpoint(s.Kind)
 	u.RawPath = ""
@@ -199,14 +199,14 @@ func (e *Engine) executeBasic(ctx context.Context, rec serviceRecord) observatio
 		return result
 	}
 	if s.Kind == KindHTTP {
-		return positive("connectivity_only", "HTTP 地址响应成功；应用就绪状态和推理能力未测试。")
+		return positive("connectivity_only", "HTTP 地址响应成功；尚未检查应用就绪状态。")
 	}
 	// LiteLLM liveliness is a JSON string, not the model-invoking /health API.
 	// Accept only its documented process response, never arbitrary 2xx text.
 	if s.Kind == KindLiteLLM {
 		var text string
 		if json.Unmarshal(b, &text) == nil && text == "I\u0027m alive!" {
-			return positive("process", "进程存活接口响应成功；网关就绪状态和推理能力未测试。")
+			return positive("process", "进程存活接口响应成功；尚未检查网关就绪状态。")
 		}
 	}
 	var obj map[string]json.RawMessage
@@ -218,7 +218,7 @@ func (e *Engine) executeBasic(ctx context.Context, rec serviceRecord) observatio
 		if json.Unmarshal(obj["version"], &v) != nil || strings.TrimSpace(v) == "" || len(v) > 128 {
 			return failure(StatusUnsupported, "invalid_response", "版本接口返回的数据格式不符合预期。")
 		}
-		return positive("process", "版本接口响应成功；模型和推理能力未测试。")
+		return positive("process", "版本接口响应成功；仅确认服务版本信息可读取。")
 	}
 	for _, key := range []string{"status", "healthy", "ok"} {
 		raw, ok := obj[key]
@@ -228,7 +228,7 @@ func (e *Engine) executeBasic(ctx context.Context, rec serviceRecord) observatio
 		var boolean bool
 		if json.Unmarshal(raw, &boolean) == nil {
 			if boolean {
-				return positive("process", "进程健康检查成功；推理能力未测试。")
+				return positive("process", "进程健康检查成功。")
 			}
 			return failure(StatusUnhealthy, "health_failed", "服务健康接口报告失败。")
 		}
@@ -236,7 +236,7 @@ func (e *Engine) executeBasic(ctx context.Context, rec serviceRecord) observatio
 		if json.Unmarshal(raw, &v) == nil {
 			switch strings.ToLower(v) {
 			case "ok", "healthy", "alive", "up", "ready", "success", "running":
-				return positive("process", "进程健康检查成功；推理能力未测试。")
+				return positive("process", "进程健康检查成功。")
 			case "error", "failed", "failure", "unhealthy", "down", "not_ready":
 				return failure(StatusUnhealthy, "health_failed", "服务健康接口报告失败。")
 			}

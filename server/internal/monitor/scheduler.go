@@ -32,6 +32,17 @@ func (e *Engine) Run(ctx context.Context) error {
 	go func() { startupCleanup <- e.PruneRetention(ctx) }()
 	failures := make(chan error, 2)
 	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := e.RunNetwork(ctx); err != nil {
+			select {
+			case failures <- err:
+			default:
+			}
+			cancel()
+		}
+	}()
 	for i := 0; i < 2; i++ {
 		wg.Add(1)
 		go func() {

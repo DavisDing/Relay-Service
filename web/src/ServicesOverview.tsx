@@ -19,6 +19,7 @@ type Props = {
   onEdit: (service: Service) => unknown;
   onToggle: (service: Service) => unknown;
   onCheck: (service: Service) => unknown;
+  onNetwork?: (service: Service) => void;
 };
 
 export function serviceStatus(service: Service) {
@@ -107,7 +108,7 @@ export function ServicesOverview(props: Props) {
   return <div className="cockpit">
     <div className="cockpit-top">
       <section className="fleet-health" aria-labelledby="fleet-title">
-        <div className="cockpit-eyebrow"><Icon name="pulse" />运行态势<span>无推理基础检查</span></div>
+        <div className="cockpit-eyebrow"><Icon name="pulse" />运行态势<span>基础服务检查</span></div>
         <h2 id="fleet-title">{headline}</h2>
         <div className="fleet-reading">
           <strong>{synced && enabled ? Math.round(counts.healthy / enabled * 100) : '—'}<small>{synced && enabled ? '%' : ''}</small></strong>
@@ -135,7 +136,7 @@ export function ServicesOverview(props: Props) {
           })}
           {!groups.length && <p className="cockpit-hint">{synced ? '接入服务后自动汇总分组' : '等待分组数据'}</p>}
         </div>
-        <p className="capability">推理能力未测试，版本更新证据未接入。</p>
+        <p className="capability">按各服务的检查证据汇总，版本更新证据未接入。</p>
       </section>
     </div>
 
@@ -202,7 +203,7 @@ function duration(service: Service) {
   return service.current?.duration_ms !== undefined ? service.current.duration_ms + ' ms' : '—';
 }
 
-function ServiceRow({ service, admin, busy, onHistory, onEdit, onToggle, onCheck }: Props & { service: Service }) {
+function ServiceRow({ service, admin, busy, onHistory, onEdit, onToggle, onCheck, onNetwork }: Props & { service: Service }) {
   const status = serviceStatus(service);
   return <details className="service-row">
     <summary>
@@ -226,8 +227,9 @@ function ServiceRow({ service, admin, busy, onHistory, onEdit, onToggle, onCheck
         <div><dt>恢复计数</dt><dd>{service.recovery_count === undefined ? '未提供' : `${service.recovery_count} / ${service.recovery_threshold}`}</dd></div>
       </dl>
       {service.current?.message && <p className="check-detail">{message(service.current.message)}</p>}
-      <CheckDetails check={service.current} />
+      {service.kind === 'mihomo' && onNetwork ? <p className="muted">订阅、节点、流量、连接与日志请在网络代理中查看。</p> : <CheckDetails check={service.current} />}
       <div className="buttons">
+        {service.kind === 'mihomo' && onNetwork && <Button className="secondary" disabled={busy} onClick={() => onNetwork(service)}>查看网络代理<Icon name="next" /></Button>}
         <Button className="secondary" disabled={busy} onClick={() => onHistory(service)}><Icon name="history" />历史</Button>
         {service.ui_url && <a className="button secondary" href={service.ui_url} target="_blank" rel="noreferrer noopener">WebUI ↗</a>}
         {admin && <>

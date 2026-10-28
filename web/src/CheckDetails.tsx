@@ -31,7 +31,7 @@ export function CheckDetails({ check }: { check?: Check }) {
     {details.source === '/api/v2/summary.json' && <>
       <strong>服务商报告的组件状态（{details.count}）</strong>
       <ul>{details.components?.map((component, index) => <li key={index}>{component.name} · {componentStates[component.status] || '未知'}</li>)}</ul>
-      <p>仅表示服务商公布的状态，不代表当前账号或网络下的实际推理结果。</p>
+      <p>仅表示服务商公布的状态，当前账号或网络下的实际可用性还需独立证据。</p>
     </>}
     {details.public_status && <>
       <strong>服务商公开状态 / 站方探针（{details.public_status.count}）</strong>
@@ -43,7 +43,7 @@ export function CheckDetails({ check }: { check?: Check }) {
         {item.updated_at && <> · 上游时间 {time(item.updated_at)}</>}
         {!!item.heartbeats?.length && <small>站方最近 {item.heartbeats.length} 条心跳：{item.heartbeats.map(state => componentStates[state] || '未知').join(' / ')}（上游未提供逐条时间）</small>}
       </li>)}</ul>
-      <p>仅表示服务商公布的状态，不代表当前账号或网络下的实际推理结果。</p>
+      <p>仅表示服务商公布的状态，当前账号或网络下的实际可用性还需独立证据。</p>
     </>}
     {details.mihomo && <>
       <strong>机场订阅额度（{details.mihomo.subscription_count}）</strong>

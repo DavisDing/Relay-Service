@@ -47,11 +47,13 @@ type serviceRecord struct {
 }
 
 type Engine struct {
-	store   storage.Store
-	crypt   Cryptor
-	now     func() time.Time
-	runMu   sync.Mutex
-	running bool
+	store     storage.Store
+	crypt     Cryptor
+	now       func() time.Time
+	runMu     sync.Mutex
+	running   bool
+	networkMu sync.Mutex
+	network   *networkRuntime
 }
 
 func New(store storage.Store, crypt Cryptor) *Engine {
@@ -178,6 +180,7 @@ func (e *Engine) Save(ctx context.Context, actor string, in ServiceInput) (Servi
 	err := e.store.Update(ctx, func(tx storage.Tx) error {
 		var rec serviceRecord
 		err := tx.Get(servicesBucket, id, &rec)
+		previousService := rec.Service
 		if in.ID == "" {
 			if err == nil {
 				return ErrConflict
@@ -227,6 +230,9 @@ func (e *Engine) Save(ctx context.Context, actor string, in ServiceInput) (Servi
 		rec.Service = Service{PublicStatus: in.PublicStatus, CollectModels: in.CollectModels, CollectLogs: in.CollectLogs, ID: id, Name: in.Name, Kind: in.Kind, BaseURL: in.BaseURL, UIURL: in.UIURL, Group: in.Group, Enabled: in.Enabled, IntervalSeconds: in.IntervalSeconds, TimeoutSeconds: in.TimeoutSeconds, FailureThreshold: in.FailureThreshold, RecoveryThreshold: in.RecoveryThreshold, AllowPrivate: in.AllowPrivate, Generation: rec.Service.Generation, CreatedAt: rec.Service.CreatedAt, UpdatedAt: now}
 		rec.Cipher = cipher
 		rec.NextDue = now.Add(time.Duration(in.IntervalSeconds) * time.Second)
+		if err := rebindNetworkSettings(tx, previousService, rec.Service); err != nil {
+			return err
+		}
 		if err := tx.Put(servicesBucket, id, rec); err != nil {
 			return err
 		}
@@ -304,9 +310,15 @@ func (e *Engine) serviceWithState(tx storage.Tx, rec serviceRecord) (Service, er
 	if s.Kind == KindStatuspage {
 		s.EvidenceLevel = "provider_reported"
 	}
-	// Capability declarations for the basic-check slice, never probe results.
-	// See docs/COMPATIBILITY.md; no inference or registry request is performed.
-	s.InferenceState = "not_tested"
+	// Inference applies only when this observation actually contains models.
+	// A service kind or process response alone is not a model inventory.
+	s.InferenceState = "not_applicable"
+	if s.Current != nil && s.Current.Details != nil {
+		d := s.Current.Details
+		if len(d.Models) > 0 || (d.Gateway != nil && (d.Gateway.ModelCount > 0 || d.Gateway.DeploymentCount > 0 || len(d.Gateway.Traffic) > 0)) {
+			s.InferenceState = "not_tested"
+		}
+	}
 	s.UpdateState = "update_status_unavailable"
 	return s, nil
 }

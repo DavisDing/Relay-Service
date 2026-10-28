@@ -1,0 +1,296 @@
+package monitor
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/url"
+	"strings"
+	"time"
+
+	"gopkg.in/yaml.v3"
+)
+
+type networkProfileMeta struct {
+	ID               string                 `json:"id"`
+	Name             string                 `json:"name"`
+	Type             string                 `json:"type"`
+	UpdatedAt        int64                  `json:"updatedAt"`
+	SubscriptionInfo *mihomoRawSubscription `json:"subscriptionInfo"`
+	Active           bool                   `json:"active"`
+}
+
+func (e *Engine) pollNetworkProfiles(ctx context.Context, w *networkWorker) {
+	if w.settings.ControlBaseURL == "" {
+		w.mu.Lock()
+		w.view.Coverage.SourceStates["profiles"] = "not_configured"
+		w.view.Coverage.Notes = networkNote(w.view.Coverage.Notes, "配置文件订阅需要独立的MetaCubeXD控制API地址/CONTROL_TOKEN；核心secret不用于控制层。")
+		w.mu.Unlock()
+		return
+	}
+	client, origin, token, closeClient, err := e.networkClient(ctx, w, true)
+	if err != nil {
+		w.mu.Lock()
+		w.view.Coverage.SourceStates["profiles"] = "credential_invalid"
+		w.mu.Unlock()
+		return
+	}
+	defer closeClient()
+	w.mu.RLock()
+	refresh := w.profilesFetched.IsZero() || e.now().Sub(w.profilesFetched) >= 5*time.Minute && w.profileCursor >= len(w.profileSubs)
+	w.mu.RUnlock()
+	if refresh {
+		timeout, cancel := context.WithTimeout(ctx, 8*time.Second)
+		var metas []networkProfileMeta
+		err = networkJSON(timeout, client, origin, token, "/api/control/profiles", &metas)
+		cancel()
+		if err != nil {
+			w.mu.Lock()
+			w.view.Coverage.SourceStates["profiles"] = "unavailable"
+			w.view.Coverage.Notes = networkNote(w.view.Coverage.Notes, "配置文件目录与核心节点缺少可验证身份映射，分别展示；未将同名节点健康借给订阅。")
+			w.rebuildNetworkInventory(e.now())
+			w.view.Coverage.Notes = networkNote(w.view.Coverage.Notes, "配置文件订阅采集不可用，请核对控制API地址与独立令牌。")
+			w.mu.Unlock()
+			return
+		}
+		subs := []NetworkSubscription{}
+		for _, meta := range metas {
+			if meta.Type != "local" && meta.Type != "remote" {
+				continue
+			}
+			if !networkProfileID(meta.ID) || !networkLabel(meta.Name) || networkReflected(meta.Name, token) || networkReflected(meta.ID, token) {
+				continue
+			}
+			w.mu.RLock()
+			reflected := w.networkSensitive(meta.ID) || w.networkSensitive(meta.Name)
+			w.mu.RUnlock()
+			if reflected {
+				continue
+			}
+			projected, err := mihomoProjectSubscription(meta.Name, mihomoRawProvider{Info: meta.SubscriptionInfo}, e.now())
+			if err != nil {
+				continue
+			}
+			var updated *time.Time
+			if meta.UpdatedAt > 0 && meta.UpdatedAt < 253402300799000 {
+				v := time.UnixMilli(meta.UpdatedAt).UTC()
+				updated = &v
+			}
+			sub := NetworkSubscription{ID: "profile-" + meta.ID, Name: meta.Name, Source: "control", Active: meta.Active, UploadBytes: projected.UploadBytes, DownloadBytes: projected.DownloadBytes, TotalBytes: projected.TotalBytes, ExpireSeconds: projected.ExpireSeconds, UsedBytes: projected.UsedBytes, RemainingBytes: projected.RemainingBytes, UpdatedAt: updated, UsageState: projected.UsageState}
+			subs = append(subs, sub)
+			if len(subs) >= 100 {
+				break
+			}
+		}
+		w.mu.Lock()
+		previousSubs := map[string]NetworkSubscription{}
+		for _, previous := range w.profileSubs {
+			previousSubs[previous.ID] = previous
+		}
+		allowed := map[string]bool{}
+		for i, sub := range subs {
+			if prior, ok := previousSubs[sub.ID]; ok && sub.UpdatedAt != nil && prior.UpdatedAt != nil && sub.UpdatedAt.Equal(*prior.UpdatedAt) {
+				allowed[sub.ID] = true
+				subs[i].NodeCount = prior.NodeCount
+				subs[i].NodeCountKnown = prior.NodeCountKnown
+			}
+		}
+		keptNodes := []NetworkNode{}
+		for _, node := range w.profileNodes {
+			if allowed[node.SubscriptionID] {
+				keptNodes = append(keptNodes, node)
+			}
+		}
+		w.profileSubs = subs
+		w.view.Overview.ActiveConfig = ""
+		for _, sub := range subs {
+			if sub.Active {
+				w.view.Overview.ActiveConfig = sub.Name
+			}
+		}
+		w.profileNodes = keptNodes
+		w.profileCursor = 0
+		w.profilesFetched = e.now()
+		w.view.Coverage.SourceStates["profiles"] = "available"
+		w.view.Coverage.SourceStates["profile_nodes"] = "collecting"
+		if len(subs) == 0 {
+			w.view.Coverage.SourceStates["profile_nodes"] = "available"
+		}
+		if len(metas) > 100 {
+			w.view.Coverage.Truncated = true
+			w.view.Coverage.Notes = networkNote(w.view.Coverage.Notes, "配置文件清单超过100项，本轮未完整覆盖。")
+		}
+		w.view.Coverage.Notes = networkNote(w.view.Coverage.Notes, "配置文件目录与核心节点缺少可验证身份映射，分别展示；未将同名节点健康借给订阅。")
+		w.rebuildNetworkInventory(e.now())
+		w.mu.Unlock()
+	}
+	// Continue from the saved cursor next minute: never silently restrict all
+	// subscriptions to the first handful of profiles on a large installation.
+	for i := 0; i < 4; i++ {
+		w.mu.RLock()
+		cursor := w.profileCursor
+		if cursor >= len(w.profileSubs) {
+			w.mu.RUnlock()
+			break
+		}
+		sub := w.profileSubs[cursor]
+		w.mu.RUnlock()
+		rawID := strings.TrimPrefix(sub.ID, "profile-")
+		timeout, cancel := context.WithTimeout(ctx, 5*time.Second)
+		resp, err := networkRequest(timeout, client, origin, token, "/api/control/profiles/"+url.PathEscape(rawID))
+		nodes := []NetworkNode{}
+		if err == nil {
+			body, readErr := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
+			resp.Body.Close()
+			if readErr != nil || len(body) > 1<<20 {
+				err = ErrValidation
+			} else {
+				var detail struct {
+					Meta    networkProfileMeta `json:"meta"`
+					Content string             `json:"content"`
+				}
+				if json.Unmarshal(body, &detail) != nil || detail.Meta.ID != rawID {
+					err = ErrValidation
+				} else {
+					nodes, err = parseNetworkProfileNodes(detail.Content, sub.ID, token)
+				}
+			}
+		}
+		cancel()
+		w.mu.Lock()
+		if err == nil {
+			kept := []NetworkNode{}
+			for _, n := range w.profileNodes {
+				if n.SubscriptionID != sub.ID {
+					kept = append(kept, n)
+				}
+			}
+			w.profileNodes = kept
+			complete := true
+			if len(w.profileNodes)+len(nodes) > networkItemLimit {
+				complete = false
+				nodes = nodes[:max(0, networkItemLimit-len(w.profileNodes))]
+				w.view.Coverage.Truncated = true
+				w.view.Coverage.SourceStates["profile_nodes"] = "partial"
+			}
+			w.profileNodes = append(w.profileNodes, nodes...)
+			w.profileSubs[cursor].NodeCount = len(nodes)
+			w.profileSubs[cursor].NodeCountKnown = complete
+		} else {
+			w.view.Coverage.SourceStates["profile_nodes"] = "partial"
+			w.view.Coverage.Notes = networkNote(w.view.Coverage.Notes, "部分订阅节点目录无法读取或含不支持的YAML结构；未激活节点没有实时延迟。")
+		}
+		w.profileCursor++
+		if w.profileCursor == len(w.profileSubs) && w.view.Coverage.SourceStates["profile_nodes"] == "collecting" {
+			w.view.Coverage.SourceStates["profile_nodes"] = "available"
+		}
+		w.view.Coverage.Notes = networkNote(w.view.Coverage.Notes, "配置文件目录与核心节点缺少可验证身份映射，分别展示；未将同名节点健康借给订阅。")
+		w.rebuildNetworkInventory(e.now())
+		w.mu.Unlock()
+	}
+}
+func networkProfileID(id string) bool {
+	if id == "" || len(id) > 128 {
+		return false
+	}
+	for _, r := range id {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
+			return false
+		}
+	}
+	return true
+}
+func networkNote(notes []string, note string) []string {
+	for _, v := range notes {
+		if v == note {
+			return notes
+		}
+	}
+	if len(notes) < 32 {
+		return append(notes, note)
+	}
+	return notes
+}
+func parseNetworkProfileNodes(content, subscription, token string) ([]NetworkNode, error) {
+	out := []NetworkNode{}
+	if len(content) > 1<<20 {
+		return out, ErrValidation
+	}
+	var root yaml.Node
+	if err := yaml.Unmarshal([]byte(content), &root); err != nil {
+		return out, ErrValidation
+	}
+	count := 0
+	var validate func(*yaml.Node, int) bool
+	validate = func(n *yaml.Node, depth int) bool {
+		count++
+		if count > 50000 || depth > 32 || n.Kind == yaml.AliasNode || n.Tag == "!!merge" {
+			return false
+		}
+		for _, child := range n.Content {
+			if !validate(child, depth+1) {
+				return false
+			}
+		}
+		return true
+	}
+	if !validate(&root, 0) || len(root.Content) != 1 || root.Content[0].Kind != yaml.MappingNode {
+		return out, ErrValidation
+	}
+	mapping := root.Content[0]
+	var proxies *yaml.Node
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i].Value == "proxy-providers" {
+			return out, ErrValidation
+		}
+		if mapping.Content[i].Value == "proxies" {
+			if proxies != nil {
+				return out, ErrValidation
+			}
+			proxies = mapping.Content[i+1]
+		}
+	}
+	if proxies == nil {
+		return out, nil
+	}
+	if proxies.Kind != yaml.SequenceNode {
+		return out, ErrValidation
+	}
+	seen := map[string]bool{}
+	for _, entry := range proxies.Content {
+		if entry.Kind != yaml.MappingNode {
+			return out, ErrValidation
+		}
+		name, kind := "", ""
+		for i := 0; i+1 < len(entry.Content); i += 2 {
+			key, value := entry.Content[i], entry.Content[i+1]
+			if key.Kind != yaml.ScalarNode {
+				return out, ErrValidation
+			}
+			if key.Value == "name" {
+				if name != "" || value.Kind != yaml.ScalarNode || value.Tag != "!!str" {
+					return out, ErrValidation
+				}
+				name = value.Value
+			}
+			if key.Value == "type" {
+				if kind != "" || value.Kind != yaml.ScalarNode || value.Tag != "!!str" {
+					return out, ErrValidation
+				}
+				kind = value.Value
+			}
+		}
+		if !networkLabel(name) || !networkLabel(kind) || networkReflected(name, token) || networkReflected(kind, token) || seen[name] {
+			return out, ErrValidation
+		}
+		if mihomoNonNode(mihomoRawProxy{Name: name, Type: kind}) {
+			continue
+		}
+		seen[name] = true
+		out = append(out, NetworkNode{ID: networkID("profile", subscription, name), SubscriptionID: subscription, Name: name, Type: kind, State: "unknown", Freshness: "missing", Loaded: false})
+		if len(out) > networkItemLimit {
+			return nil, ErrValidation
+		}
+	}
+	return out, nil
+}

@@ -61,11 +61,11 @@ JSON请求最大64KiB，未知字段/多JSON/非对象拒绝。常见错误为40
 
 ## 观测与事件语义
 
-每服务当前结果、最近成功和最近检查时间分开。严格超过两倍检查间隔为stale，当前状态unknown；恰好两倍仍为fresh。例如间隔86400秒时超过48小时才过期；此规则已经在DESIGN 3.4定义，不等于失败检测SLA。缺失、暂停、认证失败、不支持和中断各自保留原因。所有服务推理状态为not_tested，镜像更新状态不可得；基础成功不能代替模型/数据库/容器健康。
+每服务当前结果、最近成功和最近检查时间分开。严格超过两倍检查间隔为stale，当前状态unknown；恰好两倍仍为fresh。例如间隔86400秒时超过48小时才过期；此规则已经在DESIGN 3.4定义，不等于失败检测SLA。缺失、暂停、认证失败、不支持和中断各自保留原因。仅当前结果含实际模型目录、部署或模型调用证据时推理状态为not_tested，其余为not_applicable，镜像更新状态不可得；基础成功不能代替模型/数据库/容器健康。
 
 检查先持久化queued，再由两个全局worker领取running，网络IO不持有数据库事务锁；每服务至多一个进行中，旧generation结果只入历史。关机/重启的running转interrupted，不生成目标故障。手动操作号幂等不等于外部HTTP exactly-once，不承诺断链后无重复GET。
 
-检查可附带 `details={source,count,truncated,subscriptions?,models?,components?}`：mihomo 为 `/providers/proxies` 的名称和 Upload/Download/Total/Expire 投影（统一小写JSON字段，缺少info/零总额/零到期不推断无限或健康）；openai 为 `/v1/models` 的模型ID和 `not_tested`；statuspage 为 `/api/v2/summary.json` 的非分组组件名称及已知状态。响应最大1MiB，持久快照最多200项，超过标记truncated。字段为可选新增，不需要SQL结构迁移；旧记录仍可读取，不改写原历史消息，Web映射已知旧英文消息。所有服务的推理证据仍为not_tested。正常检查不足1ms时duration_ms明确返回0，预览也不省略。
+检查可附带 `details={source,count,truncated,subscriptions?,models?,components?}`：mihomo 为 `/providers/proxies` 的名称和 Upload/Download/Total/Expire 投影（统一小写JSON字段，缺少info/零总额/零到期不推断无限或健康）；openai 为 `/v1/models` 的模型ID和 `not_tested`；statuspage 为 `/api/v2/summary.json` 的非分组组件名称及已知状态。响应最大1MiB，持久快照最多200项，超过标记truncated。字段为可选新增，不需要SQL结构迁移；旧记录仍可读取，不改写原历史消息，Web映射已知旧英文消息。只有实际获取到模型证据的服务标记not_tested；非模型服务或尚无模型证据时为not_applicable。正常检查不足1ms时duration_ms明确返回0，预览也不省略。
 
 中断记录的duration_ms为StartedAt到中断完成/恢复时刻的非负墙钟耗时，重启恢复会包含停机时间；缺失开始时间或时钟回退时0表示未测得，不能解读为目标零延迟。
 
@@ -103,3 +103,17 @@ Web 总览驾驶舱的状态分布与计数来自已同步服务，过期/未观
 `collect_models`仅LiteLLM/workbuddy2api可用；`collect_logs`仅LiteLLM可用。预览复用同一配置，最多10秒、零持久化。采集失败与进程状态独立，`details.gateway`保存各来源状态、模型/部署清单和聚合调用样本，不把它们写成`inference_state=healthy`。`details.mihomo`保存订阅已用/剩余和已有节点质量；`details.public_status`保存服务商组件/站方探针报告、源时间可得性和心跳。新增JSON字段不需要SQL结构迁移，旧明细兼容显示，保留政策沿用检查历史；各类清单最多200项且完整响应内尾项异常仍汇总。
 
 调用样本窗口最近24小时，最多两页×100，使用确切model_id关联渠道部署；状态空/未知单列，缓存不证明上游成功，重复/丢弃/满页边界/部分失败标为不完整。统计不能跨重叠快照相加。Pipio可用率窗口和心跳时间未提供，不标成24小时。mihomo节点历史15分钟内且可判断才计近期正常/异常，空alive默认值不证明在线；0延迟按当前官方实现失败哨兵处理。所有投影统一检查当前凭据反射，错误只返回稳定中文分类，不保存上游原始错误体。
+
+### 网络代理工作区（D-20，2026-10-28）
+
+`GET /api/v1/network/{service_id}?section=overview|usage|subscriptions|nodes|connections|logs`读取共享后台快照，不直接代理任意上游请求。只支持有效mihomo服务；分页默认50、最大200，数字cursor为局部偏移。筛选为q/subscription/state，节点历史用node_id；hours仅1/24/168。用量完整窗口按时间聚合至最多180点，不用分页丢弃后半段。节点页默认展示24小时样本，按源checked_at去重/落位；采集时间at不冒充检测时间。
+
+管理员可GET/PUT同路径`/settings`，POST`/subscriptions/import`；写入沿用首次改密、CSRF、origin、generation和同事务脱敏审计。控制地址仅origin，控制token独立加密且不回显；换址有旧token时必须新输或显式清除。元数据导入最多100订阅/总5000节点，整个请求沿用64KiB限制；网页文件上限60KiB以留出包装空间，拒绝原始配置/链接/凭据字段，导入不创建检测证据。
+
+设备只可读取概览、用量、订阅与节点；连接、日志直接403。设备响应设置仅enabled/generation，移除控制地址、凭据存在标志、导入设置和usage_groups。连接分组含客户端、规则、完整代理链，仅管理员查看；每个连接ID连续两次有效快照间隔不超过5秒且计数递增才计增量，首见/断流/短连接不补算。各维度独立描述同一采样，不能相加或与核心traffic累加。按小时保存最多每类100个标签加其他；窗口内先合并已保留标签再显示每类最多20项及其他。API给出usage_group_start/end，分组覆盖起点向整小时取整，与核心精确窗口可相差不足1小时。
+
+后台由Engine.Run生命周期启动，同实例共享三路HTTP流和轮询，关闭浏览器仍采集；暂停/移除/换代取消旧worker，旧版本不能提交新快照。常规页面轮询5秒，目录/历史15秒；后端流每秒、连接约2秒、节点约60秒、控制profiles整轮完成后约5分钟更新，详情每轮最多4项分批推进。上游每响应1MiB、每NDJSON帧64KiB；总节点5000，来源限制与截断写入coverage，不能据截断目录宣称完整。
+
+新增network.settings/snapshot/usage/usage_groups/nodes/logs/expiry记录复用通用Store；没有SQL schema迁移。流量/节点/连接分组7天分桶保存和渐进过期，未接入之前不补造。日志默认仅有界实时缓冲，显式开启持久后默认24小时/20MiB，上限配置1～168小时/1～100MiB，同时有记录条数限制；关闭持久不删除已保存记录，到期回收。仅保存日志等级/接收时间/安全分类摘要，不保存原始访问正文；无完整连接账本、无原Web浏览器历史自动迁移。源字段缺失、未加载目录、无可信控制层与核心绑定、过期、权限不足、断流均分开呈现。
+
+代码实现不等于验收通过。用户本轮要求跳过测试，测试、构建、NAS认证联调和部署均未执行，交接见docs/nas/NETWORK-PROXY-HERMES-HANDOFF-2026-10-28.md。

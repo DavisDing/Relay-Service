@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { solarTheme, validLocation } from './solar';
 import type { Location } from './solar';
 import type { ButtonHTMLAttributes, MouseEvent, ReactNode } from 'react';
@@ -74,6 +74,8 @@ const themeOptions: { value: Theme; label: string; icon: IconName }[] = [
   { value: 'system', label: '跟随系统', icon: 'system' },
 ];
 export function ThemeControl() {
+  const solarDialogTitle = useId();
+  const [solarSettingsOpen, setSolarSettingsOpen] = useState(false);
   const [theme, setTheme] = useState<Theme>(() => {
     try {
       const saved = localStorage.getItem('relay-theme');
@@ -134,16 +136,24 @@ export function ThemeControl() {
       {themeOptions.map(option => (
         <Button type="button" className="icon-button" key={option.value}
           aria-label={option.label} title={option.label} aria-pressed={theme === option.value}
-          onClick={() => { setTheme(option.value); if (option.value === 'auto' && !location) locate(); }}>
+          aria-haspopup={option.value === 'auto' ? 'dialog' : undefined}
+          onClick={() => { setTheme(option.value); if (option.value === 'auto') setSolarSettingsOpen(true); }}>
           <Icon name={option.icon} />
         </Button>
       ))}
     </div>
-    {theme === 'auto' && <>
-      <p>{location ? '按已保存位置的日出日落自动切换，每 30 秒校准。' : '日出日落需要定位，未定位时暂时跟随系统。'}位置仅保存在此浏览器。</p>
-      <Button type="button" className="text" loading={locating} onClick={locate}>{location ? '更新位置' : '允许定位'}</Button>
-      {locationError && <p role="status">{locationError}</p>}
-    </>}
+    {solarSettingsOpen && <Modal titleId={solarDialogTitle} compact onClose={() => setSolarSettingsOpen(false)}>
+      <section className="dialog" onKeyDown={event => { if (event.key === 'Escape') event.stopPropagation(); }}>
+        <div className="section-head">
+          <h2 id={solarDialogTitle}>日出日落自动外观</h2>
+          <Button type="button" className="text" onClick={() => setSolarSettingsOpen(false)}>关闭</Button>
+        </div>
+        <p>{location ? '按已保存位置的日出日落自动切换，每 30 秒校准。' : '需要浏览器定位；未获得位置时暂时跟随系统外观。'}</p>
+        <p className="muted">位置仅保存在此浏览器，不发送到 Relay 服务端。浏览器通常要求通过 HTTPS 才能定位。</p>
+        {locationError && <p role="status" className="warning">{locationError}</p>}
+        <div className="buttons"><Button type="button" loading={locating} onClick={locate}>{location ? '更新位置' : '允许定位'}</Button></div>
+      </section>
+    </Modal>}
     </div>
   );
 }

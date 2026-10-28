@@ -13,6 +13,7 @@ const management: Page[] = [
   { key: 'settings', label: '系统设置', description: '数据保留与清理策略', icon: 'system' },
 ];
 const diagnostic: Page = { key: 'diagnostic', label: '诊断摘要', description: '生成与导出脱敏诊断', icon: 'pulse' };
+const network: Page = { key: 'network', label: '网络代理', description: '流量、订阅、节点、连接与日志', icon: 'server' };
 
 type Menu = 'monitoring' | 'management' | 'account';
 type Props = {
@@ -129,6 +130,8 @@ export function Navigation({ active, admin, busy, incidentCount, onNavigate, onL
         <Button className="nav-brand" aria-label="Relay 服务总览" disabled={busy} onClick={() => navigate('services')}><Icon name="pulse" /><span>Relay</span></Button>
         <nav className="global-nav-links" aria-label="主要导航">
           <Button className="nav-trigger" data-active={active === 'services' || active === 'alerts'} disabled={busy} {...triggerProps('monitoring')}>监控{incidentCount > 0 && <i className="nav-alert-dot" aria-label={`${incidentCount} 个服务有未恢复事件`} />}</Button>
+          <Button className="nav-trigger" data-active={active === 'network'} aria-current={active === 'network' ? 'page' : undefined} disabled={busy}
+            onPointerEnter={() => close()} onClick={() => navigate('network')}>网络代理</Button>
           {admin && <>
             <Button className="nav-trigger" data-active={active === 'devices' || active === 'settings'} disabled={busy} {...triggerProps('management')}>管理</Button>
             <Button className="nav-trigger" data-active={active === 'diagnostic'} aria-current={active === 'diagnostic' ? 'page' : undefined} disabled={busy}
@@ -156,7 +159,7 @@ export function Navigation({ active, admin, busy, incidentCount, onNavigate, onL
       <div id="mobile-navigation" className="mobile-navigation">
         <div className="mobile-nav-head"><span>Relay</span><Button className="icon-button" aria-label="关闭导航菜单" autoFocus data-autofocus onClick={() => setMobileOpen(false)}><Icon name="close" /></Button></div>
         <h2 id="mobile-navigation-title" className="nav-caption">浏览控制台</h2>
-        <nav aria-label="移动端导航">{monitoring.map(page => pageButton(page, true))}{admin && [...management, diagnostic].map(page => pageButton(page, true))}</nav>
+        <nav aria-label="移动端导航">{[...monitoring, network].map(page => pageButton(page, true))}{admin && [...management, diagnostic].map(page => pageButton(page, true))}</nav>
         <div className="mobile-nav-foot"><span>{admin ? '管理员' : '只读设备'}</span><Button className="text" onClick={() => {
           setMobileOpen(false);
           opening.current = 'press';

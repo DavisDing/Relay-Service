@@ -4,7 +4,7 @@
 
 ## 1. 固定检查入口
 
-管理员只配置 HTTP(S) origin，检查方法固定为 GET；基础检查不接受任意路径，公开状态页可配置同源相对路径，不接受查询或请求体。成功只说明下表所述观察层级，所有服务的 `inference_state` 均为 `not_tested`，镜像更新状态均为 `update_status_unavailable`。
+管理员只配置 HTTP(S) origin，检查方法固定为 GET；基础检查不接受任意路径，公开状态页可配置同源相对路径，不接受查询或请求体。成功只说明下表所述观察层级，只有当前采集实际含模型目录、部署或模型调用证据的服务，其 `inference_state` 为 `not_tested`；其余为 `not_applicable`，镜像更新状态均为 `update_status_unavailable`。
 
 | 服务 / kind | 固定 GET 路径 | 当前响应判定与层级 | 资料 / 安装验证状态 | 许可结论 |
 |---|---|---|---|---|
@@ -81,3 +81,13 @@ workbuddy2api 暂无可与用户实际部署对应的唯一上游证据，不能
 2026-10-28 本轮接口扩展：`statuspage` 配置 `public_status`，格式 `auto/statuspage/pipio/json/html`；Pipio 站方探针与本地主动推理分开。JSON采用字段路径和值映射，HTML采用显式组件标签/属性/名称/状态和值映射，不执行脚本，不全页搜索“正常”来判定。服务地址仍为origin，单独相对路径禁止跨源、查询凭据和跳转；公开页永不发送保存的Bearer凭据。
 
 LiteLLM可分别启用 `collect_models`、`collect_logs`；wb2api仅允许 `collect_models`，独立日志合同尚未核实，不猜端点。渠道清单只代表网关配置的部署，`api_base`以匿名端点分组摘要显示，无法证明服务商商业身份或全部可售模型。日志为已有调用样本，可能包含外部探针/重试，不当作完整自然请求账本；不采集正文、账户或密钥，不调用 LiteLLM `/health` 推理检查。共享采集器每响应1MiB、整轮最多5MiB/8请求，并共用配置超时、私网授权、DNS/IP校验和禁止重定向。具体合同和真实来源分别见 `nas/PUBLIC-STATUS-SOURCES-2026-10-28.md`、`nas/GATEWAY-SOURCES-2026-10-28.md`、`nas/MIHOMO-SOURCES-2026-10-28.md`。
+
+### 网络代理独立采集（D-20，2026-10-28）
+
+新增工作区基于官方MetaCubeXD v1.273.1（8bbc8f58fef71148a94fb5c0ff808f79b057337d）和mihomo v1.19.33（3f27ef39f8c96bbfbc8b0b9bb10f5c9ef60149d8）HTTP合同。来源核对见nas/NETWORK-PROXY-SOURCES-2026-10-28.md；不代表用户安装的认证接口已经联调。
+
+核心GET固定使用/version、/traffic、/memory、/connections、/proxies、/providers/proxies、/logs；memory忽略每连接首个占位帧，NDJSON持续读取而非ReadAll。MetaCubeXD控制层另配origin及CONTROL_TOKEN，只读/api/control/profiles及固定ID详情。provider为空不代表没有配置订阅；独立控制层未配置/无权限时显示覆盖缺口。控制令牌不从核心secret复用，禁止重定向，沿用私网授权/DNS-IP校验；不读取浏览器秘密、Docker或其他容器文件。
+
+配置详情含完整YAML，后端只内存提取顶层proxies名称和协议，拒绝过深/超量/alias/merge形态；provider引用不会下载，完整目录未知需标partial，不能假报0节点。同名同协议不能证明控制层与核心同一安装/配置，配置目录不继承核心健康；只有核心provider归属可直接用于该provider的节点证据。要使所有未激活订阅持续有新延迟需另行授权加载provider或隔离检测，本轮没有执行。
+
+原Web用量为浏览器IndexedDB、概览/日志为内存缓冲，Relay自行积累历史。原始日志正文不保存/回传，仅提供级别、接收时间和分类摘要；连接为当前采样，管理员用量分组为连续快照差分，均不是完整访问账本。节点24小时生命条按实际源检测时间落位，采集中断/缺失保留未知。新代码仅静态核对并格式化；按用户要求测试、构建及真实NAS联调交Hermes，均未执行。

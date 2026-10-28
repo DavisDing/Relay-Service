@@ -125,7 +125,7 @@ func detailObservation(kind string, b []byte, now time.Time) observation {
 			return invalid()
 		}
 		d.Source = "/api/v2/summary.json"
-		result = positive("provider_reported", "已读取公开状态页；状态由服务商报告，未执行模型推理测试。")
+		result = positive("provider_reported", "已读取公开状态页；状态由服务商报告。")
 		for _, component := range input.Components {
 			if component.Group {
 				continue

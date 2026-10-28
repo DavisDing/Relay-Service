@@ -211,7 +211,7 @@ test('public status component labels remain distinct from actual inference evide
   }}}));
   assert.match(html,/严重故障/);
   assert.match(html,/服务商公布的状态/);
-  assert.match(html,/不代表当前账号或网络下的实际推理结果/);
+  assert.match(html,/当前账号或网络下的实际可用性还需独立证据/);
 });
 
 test('Pipio reports its own evidence and fractional uptime without inventing source time', () => {
