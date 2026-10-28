@@ -56,11 +56,15 @@ func pinTarget(cfg *config.Config) error {
 	return writePrivate(path, []byte(postgresTarget(cfg.DatabaseURL)))
 }
 func guardSQLiteCutover(ctx context.Context, cfg *config.Config, db storage.Database) error {
+	target, ok := db.(*storage.Postgres)
+	if !ok || target == nil {
+		return fmt.Errorf("SQLite cutover requires a PostgreSQL target")
+	}
 	if err := checkTargetPin(cfg); err != nil {
 		return err
 	}
 	if _, err := os.Stat(cfg.SQLitePath); err == nil {
-		if err := storage.CheckSQLiteCutover(ctx, cfg.SQLitePath, db.(*storage.Postgres)); err != nil {
+		if err := storage.CheckSQLiteCutover(ctx, cfg.SQLitePath, target); err != nil {
 			return err
 		}
 	} else if !os.IsNotExist(err) {
@@ -80,10 +84,10 @@ func migrateSQLite(args []string) error {
 	if err != nil {
 		return err
 	}
-	if cfg.DatabaseURL == "" || cfg.MigrationDatabaseURL == "" {
-		return fmt.Errorf("migrate-sqlite requires RELAY_DATABASE_URL and RELAY_MIGRATION_DATABASE_URL")
+	if cfg.DatabaseURL == "" {
+		return fmt.Errorf("migrate-sqlite requires RELAY_DATABASE_URL")
 	}
-	if err := os.MkdirAll(cfg.DataDir, 0700); err != nil {
+	if err := storage.EnsurePrivateDir(cfg.DataDir); err != nil {
 		return err
 	}
 	lock, err := storage.LockFile(filepath.Join(cfg.DataDir, "instance.lock"))
@@ -122,7 +126,7 @@ func migrateSQLite(args []string) error {
 	} else if !os.IsNotExist(pendingErr) {
 		return pendingErr
 	}
-	target, err := storage.OpenPostgres(ctx, cfg.MigrationDatabaseURL, 2)
+	target, err := storage.OpenPostgres(ctx, cfg.DatabaseURL, 2)
 	if err != nil {
 		return fmt.Errorf("connect migration target: %w", err)
 	}

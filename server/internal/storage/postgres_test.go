@@ -164,6 +164,9 @@ func postgresIntegrationStores(t *testing.T) (*Postgres, *Postgres) {
 	t.Helper()
 	databaseURL := strings.TrimSpace(os.Getenv("RELAY_TEST_DATABASE_URL"))
 	if databaseURL == "" {
+		if os.Getenv("RELAY_REQUIRE_POSTGRES_TESTS") == "1" {
+			t.Fatal("RELAY_TEST_DATABASE_URL is required for mandatory PostgreSQL integration tests")
+		}
 		t.Skip("NOT_EXECUTED: set RELAY_TEST_DATABASE_URL to opt into a disposable PostgreSQL database ending in _test")
 	}
 	config, err := pgxpool.ParseConfig(databaseURL)

@@ -29,7 +29,7 @@ func prepareSchema(ctx context.Context, app schemaChecker, migrationURL string, 
 		return fmt.Errorf("check Relay database schema: %w", err)
 	}
 	if migrationURL == "" {
-		return fmt.Errorf("%w; set RELAY_MIGRATION_DATABASE_URL for automatic initialization or run relay migrate", err)
+		return fmt.Errorf("%w; configure RELAY_DATABASE_URL for automatic initialization", err)
 	}
 	slog.Info("initializing Relay database schema")
 	db, err := open(ctx, migrationURL)

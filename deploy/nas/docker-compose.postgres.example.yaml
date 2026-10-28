@@ -3,5 +3,4 @@
 services:
   relay:
     environment:
-      RELAY_DATABASE_URL: ${RELAY_DATABASE_URL:?set Relay business connection}
-      RELAY_MIGRATION_DATABASE_URL: ${RELAY_MIGRATION_DATABASE_URL:?set Relay schema connection}
+      RELAY_DATABASE_URL: ${RELAY_DATABASE_URL:?set Relay database connection}

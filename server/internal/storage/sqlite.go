@@ -196,12 +196,7 @@ func (t *sqliteTx) Get(bucket, key string, target any) error {
 	return json.Unmarshal([]byte(raw), target)
 }
 func retentionTime(bucket string, raw []byte) any {
-	field := ""
-	if bucket == "monitor.history" {
-		field = "completed_at"
-	} else if bucket == AuditBucket {
-		field = "at"
-	}
+	field := retentionField(bucket)
 	if field == "" {
 		return nil
 	}
@@ -302,7 +297,7 @@ func (t *sqliteTx) Count(bucket string, o CountOptions) (int64, error) {
 		query += " AND substr(record_key,1,length(?))=?"
 		args = append(args, o.Prefix, o.Prefix)
 	}
-	if (bucket == "monitor.history" && o.TimeField == "completed_at") || (bucket == AuditBucket && o.TimeField == "at") {
+	if o.TimeField == retentionField(bucket) {
 		query += " AND retention_at IS NOT NULL AND retention_at < ?"
 		args = append(args, o.Before.UnixMicro())
 	} else {
@@ -335,13 +330,20 @@ func (t *sqliteTx) Next(sequence string) (uint64, error) {
 
 // Backup creates a consistent, private snapshot; the caller also holds the
 // instance lock. VACUUM INTO includes committed WAL data without copying files.
-func (s *SQLite) Backup(ctx context.Context, path string) error {
+func (s *SQLite) Backup(ctx context.Context, path string) (result error) {
 	// VACUUM INTO accepts an empty file. Reserve it privately before SQLite
 	// writes any data so a permissive parent directory cannot expose a backup.
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return fmt.Errorf("reserve new backup destination: %w", err)
 	}
+	defer func() {
+		if result != nil {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				result = errors.Join(result, fmt.Errorf("remove incomplete backup: %w", err))
+			}
+		}
+	}()
 	if err := f.Close(); err != nil {
 		return err
 	}

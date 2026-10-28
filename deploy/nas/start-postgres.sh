@@ -6,7 +6,7 @@ umask 077
 secrets_dir=${RELAY_SECRETS_DIR:-/relay-secrets}
 data_root=${RELAY_POSTGRES_DATA_ROOT:-/var/lib/postgresql}
 current="$secrets_dir/current"
-secret_names='POSTGRES_SUPERUSER_PASSWORD RELAY_DB_PASSWORD RELAY_MIGRATOR_PASSWORD RELAY_APP_PASSWORD RELAY_ENCRYPTION_KEY RELAY_INITIAL_PASSWORD'
+secret_names='POSTGRES_SUPERUSER_PASSWORD RELAY_APP_PASSWORD RELAY_ENCRYPTION_KEY RELAY_INITIAL_PASSWORD'
 if [ ! -d "$data_root" ] || [ -L "$current" ]; then
   echo 'Invalid database or deployment secrets directory.' >&2
   exit 1
@@ -18,8 +18,7 @@ if [ ! -d "$current" ]; then
   # Existing manual installations can import all their original secrets. An
   # incomplete set must fail instead of silently losing database/key access.
   if [ -n "$(find "$data_root" -name PG_VERSION -type f -print -quit)" ]; then
-    if [ -z "${POSTGRES_SUPERUSER_PASSWORD:-}" ] || [ -z "${RELAY_DB_PASSWORD:-}" ] ||
-       [ -z "${RELAY_MIGRATOR_PASSWORD:-}" ] || [ -z "${RELAY_APP_PASSWORD:-}" ] || [ -z "${RELAY_ENCRYPTION_KEY:-}" ]; then
+    if [ -z "${POSTGRES_SUPERUSER_PASSWORD:-}" ] || [ -z "${RELAY_APP_PASSWORD:-}" ] || [ -z "${RELAY_ENCRYPTION_KEY:-}" ]; then
       echo 'Existing database has no deployment secrets. Restore the secrets volume or provide all original secrets; refusing to regenerate.' >&2
       exit 1
     fi
@@ -30,8 +29,6 @@ if [ ! -d "$current" ]; then
     # Only read the explicit allowlist; never eval environment or stored data.
     case "$name" in
       POSTGRES_SUPERUSER_PASSWORD) value=${POSTGRES_SUPERUSER_PASSWORD:-} ;;
-      RELAY_DB_PASSWORD) value=${RELAY_DB_PASSWORD:-} ;;
-      RELAY_MIGRATOR_PASSWORD) value=${RELAY_MIGRATOR_PASSWORD:-} ;;
       RELAY_APP_PASSWORD) value=${RELAY_APP_PASSWORD:-} ;;
       RELAY_ENCRYPTION_KEY) value=${RELAY_ENCRYPTION_KEY:-} ;;
       RELAY_INITIAL_PASSWORD) value=${RELAY_INITIAL_PASSWORD:-} ;;
@@ -48,15 +45,13 @@ if [ ! -d "$current" ]; then
     printf '%s' "$value" > "$stage/$name"
   done
   app=$(cat "$stage/RELAY_APP_PASSWORD")
-  migrator=$(cat "$stage/RELAY_MIGRATOR_PASSWORD")
   {
     printf 'RELAY_DATABASE_URL=postgres://relay_app:%s@postgres:5432/relay?sslmode=disable\n' "$app"
-    printf 'RELAY_MIGRATION_DATABASE_URL=postgres://relay_migrator:%s@postgres:5432/relay?sslmode=disable\n' "$migrator"
     printf 'RELAY_ENCRYPTION_KEY=%s\n' "$(cat "$stage/RELAY_ENCRYPTION_KEY")"
     printf 'RELAY_INITIAL_PASSWORD=%s\n' "$(cat "$stage/RELAY_INITIAL_PASSWORD")"
   } > "$stage/deployment.env"
   # Relay may traverse the directory and read only its configuration file.
-  # Keep superuser/owner password files root-only, while only its disposable initial directory is writable.
+  # Keep password files root-only; only the disposable initial directory is writable.
   chown 0:65532 "$stage"
   chmod 710 "$stage"
   chown 65532:65532 "$stage/deployment.env"
@@ -66,7 +61,7 @@ if [ ! -d "$current" ]; then
 fi
 
 # Long-lived secrets remain root-owned and are never writable by Relay.
-persistent_names='POSTGRES_SUPERUSER_PASSWORD RELAY_DB_PASSWORD RELAY_MIGRATOR_PASSWORD RELAY_APP_PASSWORD RELAY_ENCRYPTION_KEY'
+persistent_names='POSTGRES_SUPERUSER_PASSWORD RELAY_APP_PASSWORD RELAY_ENCRYPTION_KEY'
 for name in $persistent_names; do
   if [ ! -s "$current/$name" ] || [ -L "$current/$name" ]; then
     echo 'Deployment secrets are incomplete; restore the secrets volume.' >&2
@@ -81,17 +76,14 @@ if [ ! -s "$current/deployment.env" ] || [ -L "$current/deployment.env" ]; then
   exit 1
 fi
 POSTGRES_PASSWORD=$(cat "$current/POSTGRES_SUPERUSER_PASSWORD")
-RELAY_DB_PASSWORD=$(cat "$current/RELAY_DB_PASSWORD")
-RELAY_MIGRATOR_PASSWORD=$(cat "$current/RELAY_MIGRATOR_PASSWORD")
 RELAY_APP_PASSWORD=$(cat "$current/RELAY_APP_PASSWORD")
 write_config() {
   printf 'RELAY_DATABASE_URL=postgres://relay_app:%s@postgres:5432/relay?sslmode=disable\n' "$RELAY_APP_PASSWORD"
-  printf 'RELAY_MIGRATION_DATABASE_URL=postgres://relay_migrator:%s@postgres:5432/relay?sslmode=disable\n' "$RELAY_MIGRATOR_PASSWORD"
   printf 'RELAY_ENCRYPTION_KEY=%s\n' "$(cat "$current/RELAY_ENCRYPTION_KEY")"
 }
 legacy_password="$current/RELAY_INITIAL_PASSWORD"
 if ! write_config | cmp -s - "$current/deployment.env"; then
-  # Import the old four-line configuration once; never accept unrelated changes.
+  # Import the configuration containing the initial password once.
   if [ ! -s "$legacy_password" ] || [ -L "$legacy_password" ] || ! {
     write_config
     printf 'RELAY_INITIAL_PASSWORD=%s\n' "$(cat "$legacy_password")"
@@ -140,6 +132,6 @@ fi
 # Also correct ownership for installations already migrated by an earlier start.
 chown 0:65532 "$current/deployment.env"
 chmod 640 "$current/deployment.env"
-export POSTGRES_PASSWORD RELAY_DB_PASSWORD RELAY_MIGRATOR_PASSWORD RELAY_APP_PASSWORD
+export POSTGRES_PASSWORD RELAY_APP_PASSWORD
 unset POSTGRES_PASSWORD_FILE RELAY_INITIAL_PASSWORD
 exec docker-entrypoint.sh "$@"

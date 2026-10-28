@@ -21,7 +21,7 @@ if [ "$image_count" != 1 ]; then
   echo "Template must contain exactly one RELAY_IMAGE" >&2
   exit 1
 fi
-for secret_name in POSTGRES_SUPERUSER_PASSWORD RELAY_DB_PASSWORD RELAY_MIGRATOR_PASSWORD RELAY_APP_PASSWORD RELAY_BOOTSTRAP_TOKEN RELAY_ENCRYPTION_KEY; do
+for secret_name in POSTGRES_SUPERUSER_PASSWORD RELAY_APP_PASSWORD RELAY_BOOTSTRAP_TOKEN RELAY_ENCRYPTION_KEY; do
   secret_count=$(awk -v key="$secret_name" 'index($0,key "=")==1 {count++} END {print count+0}' "$template")
   if [ "$secret_count" != 1 ]; then
     echo "Template must contain exactly one $secret_name" >&2
@@ -53,7 +53,7 @@ trap 'rm -f "$temporary"' EXIT HUP INT TERM
 while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in
     RELAY_IMAGE=*) printf 'RELAY_IMAGE=%s\n' "$image" ;;
-    POSTGRES_SUPERUSER_PASSWORD=*|RELAY_DB_PASSWORD=*|RELAY_MIGRATOR_PASSWORD=*|RELAY_APP_PASSWORD=*|RELAY_BOOTSTRAP_TOKEN=*|RELAY_ENCRYPTION_KEY=*)
+    POSTGRES_SUPERUSER_PASSWORD=*|RELAY_APP_PASSWORD=*|RELAY_BOOTSTRAP_TOKEN=*|RELAY_ENCRYPTION_KEY=*)
       name=${line%%=*}
       value=$(openssl rand -hex 32)
       printf '%s=%s\n' "$name" "$value"

@@ -22,7 +22,7 @@ func TestPublicURLIsOptionalForDirectNASAccess(t *testing.T) {
 
 func TestDeploymentFileRestoresGeneratedSecretsWithoutShellEvaluation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "deployment.env")
-	contents := "RELAY_DATABASE_URL=postgres://app:original-secret@postgres:5432/relay?sslmode=disable\nRELAY_MIGRATION_DATABASE_URL=postgres://migrator:original-secret@postgres:5432/relay?sslmode=disable\nRELAY_ENCRYPTION_KEY=" + strings.Repeat("ab", 32) + "\nRELAY_INITIAL_PASSWORD=" + strings.Repeat("a", 64) + "\n"
+	contents := "RELAY_DATABASE_URL=postgres://app:original-secret@postgres:5432/relay?sslmode=disable\nRELAY_ENCRYPTION_KEY=" + strings.Repeat("ab", 32) + "\nRELAY_INITIAL_PASSWORD=" + strings.Repeat("a", 64) + "\n"
 	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -93,42 +93,35 @@ func TestPublicURLDoesNotAllowCredentialsOrPaths(t *testing.T) {
 	}
 }
 
-func TestStartupMigrationConnectionMustUseSameDatabaseAndOptions(t *testing.T) {
-	application := "postgres://app:business-secret@postgres:5432/relay?sslmode=disable&search_path=public"
+func TestDatabaseConnectionSelection(t *testing.T) {
 	for _, test := range []struct {
-		name, migration string
-		invalid         bool
+		name, databaseURL string
+		invalid           bool
 	}{
-		{name: "disabled"},
-		{name: "different credentials", migration: "postgresql://migrator:setup-secret@POSTGRES/relay?search_path=public&sslmode=disable"},
-		{name: "wrong host", migration: "postgres://migrator:setup-secret@other/relay?sslmode=disable&search_path=public", invalid: true},
-		{name: "wrong port", migration: "postgres://migrator:setup-secret@postgres:5433/relay?sslmode=disable&search_path=public", invalid: true},
-		{name: "wrong database", migration: "postgres://migrator:setup-secret@postgres/other?sslmode=disable&search_path=public", invalid: true},
-		{name: "wrong schema", migration: "postgres://migrator:setup-secret@postgres/relay?sslmode=disable&search_path=other", invalid: true},
-		{name: "host override", migration: "postgres://migrator:setup-secret@postgres/relay?sslmode=disable&search_path=public&host=other", invalid: true},
-		{name: "shared database", migration: "postgres://migrator:setup-secret@postgres/postgres", invalid: true},
-		{name: "invalid URL", migration: "invalid-setup-secret", invalid: true},
+		{name: "SQLite"},
+		{name: "single PostgreSQL account", databaseURL: "postgres://relay_app:test-only@postgres/relay"},
+		{name: "missing database", databaseURL: "postgres://relay_app:test-only@postgres", invalid: true},
+		{name: "missing host", databaseURL: "postgres:///relay", invalid: true},
+		{name: "wrong protocol", databaseURL: "mysql://relay_app:test-only@postgres/relay", invalid: true},
+		{name: "management database", databaseURL: "postgres://relay_app:test-only@postgres/postgres", invalid: true},
+		{name: "template database", databaseURL: "postgres://relay_app:test-only@postgres/template0", invalid: true},
+		{name: "nested database path", databaseURL: "postgres://relay_app:test-only@postgres/relay/other", invalid: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			cfg, err := LoadWith(func(key string) string {
-				switch key {
-				case "RELAY_DATABASE_URL":
-					return application
-				case "RELAY_MIGRATION_DATABASE_URL":
-					return test.migration
-				case "RELAY_ENCRYPTION_KEY":
-					return strings.Repeat("ab", 32)
+			cfg, err := LoadWith(func(name string) string {
+				if name == "RELAY_DATABASE_URL" {
+					return test.databaseURL
 				}
 				return ""
 			})
 			if (err != nil) != test.invalid {
-				t.Fatalf("LoadWith error=%v; invalid=%v", err, test.invalid)
+				t.Fatalf("configuration error=%v, invalid=%v", err, test.invalid)
 			}
-			if err == nil && cfg.MigrationDatabaseURL != test.migration {
-				t.Fatal("startup migration connection was not preserved")
+			if err == nil && cfg.DatabaseURL != test.databaseURL {
+				t.Fatal("database connection was not preserved")
 			}
-			if err != nil && (strings.Contains(err.Error(), "setup-secret") || strings.Contains(err.Error(), "business-secret")) {
-				t.Fatal("configuration error contains a database credential")
+			if err != nil && strings.Contains(err.Error(), "test-only") {
+				t.Fatal("configuration error disclosed database credentials")
 			}
 		})
 	}

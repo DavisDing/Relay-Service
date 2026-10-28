@@ -99,3 +99,18 @@ func TestPostgresPinPreventsSilentFallback(t *testing.T) {
 		t.Fatal("changed database silently")
 	}
 }
+
+func TestCutoverRejectsUnsupportedDatabaseWithoutPanic(t *testing.T) {
+	cfg := config.Config{DataDir: t.TempDir()}
+	cfg.SQLitePath = filepath.Join(cfg.DataDir, "relay.sqlite")
+	store, err := storage.OpenSQLite(context.Background(), cfg.SQLitePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	for _, db := range []storage.Database{store, (*storage.Postgres)(nil), nil} {
+		if err := guardSQLiteCutover(context.Background(), &cfg, db); err == nil {
+			t.Fatal("unsupported cutover target accepted")
+		}
+	}
+}

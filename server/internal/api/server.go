@@ -30,11 +30,12 @@ type Options struct {
 }
 
 type Server struct {
-	store   storage.Store
-	access  *access.Service
-	monitor *monitor.Engine
-	options Options
-	mux     *http.ServeMux
+	store         storage.Store
+	access        *access.Service
+	monitor       *monitor.Engine
+	options       Options
+	mux           *http.ServeMux
+	databaseCheck chan struct{}
 }
 
 type envelope struct {
@@ -117,7 +118,7 @@ func projectService(s monitor.Service) deviceService {
 }
 
 func New(store storage.Store, accessService *access.Service, monitorEngine *monitor.Engine, options Options) http.Handler {
-	s := &Server{store: store, access: accessService, monitor: monitorEngine, options: options, mux: http.NewServeMux()}
+	s := &Server{store: store, access: accessService, monitor: monitorEngine, options: options, mux: http.NewServeMux(), databaseCheck: make(chan struct{}, 1)}
 	s.routes()
 	s.mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "API route was not found")
@@ -127,6 +128,7 @@ func New(store storage.Store, accessService *access.Service, monitorEngine *moni
 }
 
 func (s *Server) routes() {
+	s.databaseRoutes()
 	s.mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "live"})
 	})

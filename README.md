@@ -15,6 +15,10 @@ docker compose -f docker-compose.yaml logs --tail=100 relay
 
 打开 `http://NAS实际地址:8787`。首次用户名为 `admin`，实例独立临时密码见 Relay 日志；首次登录必须设置正式账号密码。密钥、SQLite 数据和临时凭据由 Relay 自动初始化到 `relay-data` 卷，改密成功后删除临时文件。不需要 PostgreSQL、`.env`、宿主 IP 或外部网络。无数据库服务、同步进程或双写任务；单实例 SQLite 使用单连接、短事务和索引查询。
 
+镜像默认以 root（UID/GID `0:0`）直接运行 `/relay`，Relay 本身作为 PID 1；无需填写 UID/GID 或增加初始化服务。只应挂载 Relay 专用目录，避免将共享父目录作为 `/data`。
+
+默认容器名为`relay-service`（`container_name`）。未显式指定时，Compose按“项目名－服务名－序号”生成名称，所以此前显示为`relay-service-relay-1`；项目名与服务名不是同一个字段。需要多个实例时分别调整容器名、宿主端口和数据卷。
+
 ### 三种存储用法
 
 | 使用方式 | 部署操作 |
@@ -24,6 +28,8 @@ docker compose -f docker-compose.yaml logs --tail=100 relay
 | 首装直接 PostgreSQL | 先创建 Relay 专用库/账号，再配置业务和建表连接；Relay 启动时自动建表 |
 
 完整可复制步骤见 [存储、PostgreSQL 初始化与 SQLite 迁移](docs/nas/STORAGE.md)。提供 [官方 PostgreSQL 服务示例](deploy/nas/postgres.compose.yaml)、[数据库/账号初始化脚本](deploy/nas/init-db/001-roles.sh)和[已有 PostgreSQL 连接示例](deploy/nas/docker-compose.postgres.example.yaml)。后续 LiteLLM 可共用 PostgreSQL 实例，另建 `litellm` 库和账号；Relay 也可以一直保留 SQLite。
+
+已运行Relay时，可在“系统设置 → 数据库 → 连接已有PostgreSQL”查看建库/账号准备说明，并按需检查连接、权限与候选空目标。检查不建库、不保存密码或切库；页面内迁移尚未开放，已有SQLite数据仍按上述文档停机迁移。
 
 **不配置 PostgreSQL 连接就默认 SQLite；配置后连接失败会报错，不会降级到空 SQLite。已有 SQLite 数据必须显式迁移，不能只加连接串就切库。迁移后删除连接配置也不会自动回到旧数据。** 迁移先生成一致性备份，目标逐条复制并核对数量、内容摘要和序列；不覆盖非空目标，不删除源文件，保留同一加密密钥。
 
@@ -35,8 +41,7 @@ docker compose -f docker-compose.yaml logs --tail=100 relay
 |---|---|---|
 | `RELAY_DATA_DIR` | 镜像内 `/data`；直接运行二进制为 `./data` | 数据、密钥和后端标记目录；必须持久化，PostgreSQL 模式也保留 |
 | `RELAY_SQLITE_PATH` | 数据目录下 `relay.sqlite` | 自定义 SQLite 文件路径；使用 NAS 本机磁盘，不放 SMB/NFS/同步盘；更改前迁移原文件与 WAL 数据 |
-| `RELAY_DATABASE_URL` | 空，使用 SQLite | 例如 `postgres://relay_app:密码@postgres:5432/relay?sslmode=disable`；密码特殊字符需 URL 编码，远程连接按部署配置 TLS |
-| `RELAY_MIGRATION_DATABASE_URL` | 空 | PostgreSQL 建表/升级连接；与业务连接同主机/端口/库/选项，使用独立迁移账号；已完成结构且无升级时可省略 |
+| `RELAY_DATABASE_URL` | 空，使用 SQLite | PostgreSQL 只需这一条连接，同一账号负责读写、自动建表/升级及停机迁移；例如 `postgres://relay_app:密码@postgres:5432/relay?sslmode=disable`；密码特殊字符需 URL 编码，远程连接按部署配置 TLS |
 | `RELAY_LOG_LEVEL` | `info` | `debug`、`info`、`warn`、`error` |
 | `RELAY_PUBLIC_URL` | 空，允许按请求 Host/协议验证来源 | 固定反代 origin，例如 `https://relay.example.com`，不含路径/查询/账号；局域网直连无需设置 |
 | `RELAY_SECURE_COOKIES` | 随 public URL 是否 HTTPS，未固定 URL 默认 `false` | `"true"` / `"false"`；固定 URL 时必须与协议一致 |
@@ -47,6 +52,8 @@ docker compose -f docker-compose.yaml logs --tail=100 relay
 | `RELAY_DEPLOYMENT_FILE` | 空 | 兼容旧部署文件，非空时必须存在；显式环境值覆盖文件值 |
 | `RELAY_INITIAL_PASSWORD_FILE` | 数据目录下 `initial-password` | 临时密码文件；兼容旧部署时可指定原路径，正式改密后删除 |
 
+PostgreSQL 仅使用 `RELAY_DATABASE_URL`，不提供第二套迁移连接配置。空库首次初始化可用普通账号的 `public` schema USAGE/CREATE 权限；已有库升级还需对现有对象具有相应权限，不自动变更所有者。
+
 常用 Compose 修改项：
 
 | 项目 | 默认 | 示例 |
@@ -54,7 +61,9 @@ docker compose -f docker-compose.yaml logs --tail=100 relay
 | 宿主端口 | `8787:8787` | 主文件直接改为 `8877:8787`；只改左侧不用调整监听参数 |
 | 绑定接口 | 宿主所有接口 | `127.0.0.1:8787:8787` 仅宿主可访问 |
 | 镜像 | `ghcr.io/davisding/relay-service:latest` | 可选择已发布版本或 digest |
-| 持久化 | `relay-data:/data` | 可改 NAS 本地目录，确保 UID/GID 65532 可写；已有数据需先搬迁，不能只换卷名 |
+| 持久化 | `relay-data:/data` | 可改 NAS 本地 Relay 专用目录，默认由 root 访问；已有数据需先搬迁，不能只换卷名 |
+| 容器名 | `relay-service` | 在relay服务下修改 `container_name`；同一Docker主机不可重名 |
+| 运行用户 | root（`0:0`） | 通常无需设置；显式 `user: "1000:100"` 可覆盖，需提前保证目录和已有文件对该身份可读写 |
 | 网络 | Compose 默认网络 | 有需要时显式合并 [已有网络示例](deploy/nas/docker-compose.network.example.yaml)，再改成你的网络名 |
 
 例如只修改主文件中对应字段：
@@ -62,6 +71,7 @@ docker compose -f docker-compose.yaml logs --tail=100 relay
 ```yaml
 services:
   relay:
+    container_name: relay-service
     image: ghcr.io/davisding/relay-service:latest
     restart: unless-stopped
     ports:
@@ -76,6 +86,8 @@ volumes:
 ```
 
 以上 HTTPS 域名仅是反代示例，HTTP 直连时省略。主文件端口请直接修改，多文件合并可能保留旧端口。
+
+默认 root 运行方式需要重新构建并发布镜像。旧镜像可在 relay 服务下添加 `user: "0:0"` 并重新创建容器，保留原数据挂载即可，无需修改应用参数。只读挂载、NAS ACL 或 root-squash 仍可能限制访问；应用保留数据目录 0700 和私密文件权限约束。
 
 也可以复制 [.env.example](deploy/nas/.env.example) 为 `.env`，显式合并 [设置文件](deploy/nas/docker-compose.settings.example.yaml)。只有 Compose 引用的变量才生效，主文件本身未引用 `.env`。修改后重新 `up -d` 应用配置，单纯 `restart` 不会更新环境。
 

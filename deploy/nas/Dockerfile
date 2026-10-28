@@ -41,11 +41,12 @@ LABEL org.opencontainers.image.title="Relay Service" \
       org.opencontainers.image.revision="${REVISION}" \
       org.opencontainers.image.created="${CREATED}"
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY --from=build --chown=65532:65532 /out/relay /relay
-COPY --from=build --chown=65532:65532 /out/data /data
+COPY --from=build --chown=0:0 --chmod=0555 /out/relay /relay
+COPY --from=build --chown=0:0 /out/data /data
 ENV RELAY_DATA_DIR=/data
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD ["/relay", "healthcheck"]
 EXPOSE 8787
-USER 65532:65532
+# Run Relay directly as root so NAS bind mounts need no matching UID/GID.
+USER 0:0
 ENTRYPOINT ["/relay"]

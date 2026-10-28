@@ -69,7 +69,7 @@ template = payload['.env.example'][0].decode('utf-8')
 if len(re.findall(r'^RELAY_IMAGE=.*$', template, re.MULTILINE)) != 1:
     sys.exit('Environment template must contain exactly one RELAY_IMAGE')
 template = re.sub(r'^RELAY_IMAGE=.*$', f'RELAY_IMAGE={image}', template, flags=re.MULTILINE)
-secret_names = ('POSTGRES_SUPERUSER_PASSWORD', 'RELAY_DB_PASSWORD', 'RELAY_MIGRATOR_PASSWORD', 'RELAY_APP_PASSWORD', 'RELAY_BOOTSTRAP_TOKEN', 'RELAY_ENCRYPTION_KEY')
+secret_names = ('POSTGRES_SUPERUSER_PASSWORD', 'RELAY_APP_PASSWORD', 'RELAY_BOOTSTRAP_TOKEN', 'RELAY_ENCRYPTION_KEY')
 for name in secret_names:
     values = re.findall(rf'^{name}=(.*)$', template, re.MULTILINE)
     if len(values) != 1 or (values[0] and not values[0].startswith('replace-with-')):
@@ -83,6 +83,13 @@ Import docker-compose.yaml into NAS Docker Projects or run:
   docker compose -f docker-compose.yaml up -d
 Default: one Relay container, embedded SQLite and a persistent relay-data volume.
 No .env, PostgreSQL, external network or manual secret generation is needed.
+The container is named relay-service. To deploy multiple instances, give each
+its own container_name, ports and data volume.
+The image runs /relay directly as root (UID:GID 0:0), as PID 1.
+No UID/GID environment settings or permission launcher are required.
+An explicit Compose user overrides this default and requires a writable data mount.
+Mount only Relay's dedicated data directory. For an older image, add user: "0:0"
+and recreate the container while keeping the existing data mount.
 Relay generates and persists its encryption key and initial password internally.
 Open http://<NAS address>:8787 and get the temporary admin password from Relay logs.
 First login requires a permanent account/password; the temporary file is removed.

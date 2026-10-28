@@ -24,6 +24,7 @@ func TestPrepareSchema(t *testing.T) {
 		{name: "initialized skips migration credentials", checks: []error{nil}, migrationURL: "setup-credential", events: []string{"check"}},
 		{name: "initialized works without setup credentials", checks: []error{nil}, events: []string{"check"}},
 		{name: "empty schema initializes before verification", checks: []error{storage.ErrSchemaNotReady, nil}, migrationURL: "setup-credential", events: []string{"check", "open", "migrate", "close", "check"}},
+		{name: "single account initializes before verification", checks: []error{storage.ErrSchemaNotReady, nil}, migrationURL: "business-credential", events: []string{"check", "open", "migrate", "close", "check"}},
 		{name: "pending schema wraps readiness error", checks: []error{fmt.Errorf("pending: %w", storage.ErrSchemaNotReady), nil}, migrationURL: "setup-credential", events: []string{"check", "open", "migrate", "close", "check"}},
 		{name: "missing setup credentials stops startup", checks: []error{storage.ErrSchemaNotReady}, wantErr: storage.ErrSchemaNotReady, events: []string{"check"}},
 		{name: "connectivity permission or incompatible history does not initialize", checks: []error{failed}, migrationURL: "setup-credential", wantErr: failed, events: []string{"check"}},

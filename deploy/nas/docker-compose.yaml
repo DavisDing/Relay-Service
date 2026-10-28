@@ -2,6 +2,7 @@ name: relay-service
 
 services:
   relay:
+    container_name: relay-service
     image: ghcr.io/davisding/relay-service:latest
     restart: unless-stopped
     ports:

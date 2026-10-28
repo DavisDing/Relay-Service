@@ -6,6 +6,7 @@ import { Navigation } from './Navigation';
 import { Button, Icon, Modal, ThemeControl, Toast } from './ui';
 import { api, APIError, APIRequestSupersededError, invalidateAPIRequests } from './api';
 import { RetentionPanel } from './RetentionPanel';
+import { DatabasePanel } from './DatabasePanel';
 import type { Principal, Check, Service, Alert, Device, AlertPage, Form, Confirmation } from './types';
 import { time } from './presentation';
 import { AlertsPanel } from './AlertsPanel';
@@ -348,6 +349,7 @@ function App() {
         {error && <p role="alert" className="error">{error}</p>}
         <Button type="submit" loading={busy}>{authMode === 'bootstrap' ? '创建管理员' : '登录'}</Button>
       </form>
+      {authMode === 'login' && <p className="sub">首次使用？请联系部署管理员获取登录信息，登录后按提示设置正式密码。</p>}
       <small>凭据只在服务端使用。公网访问请使用可信 HTTPS 入口。</small>
       <Toast message={notice} onDismiss={dismissNotice} />
     </main>
@@ -499,9 +501,14 @@ function App() {
           </section>
         )}
         {tab === 'settings' && me.role === 'admin' && (
+          <>
+          <section className="panel" aria-label="数据库设置">
+            <DatabasePanel onUnauthorized={clearSession} />
+          </section>
           <section className="panel" aria-label="数据保留设置">
             <RetentionPanel onNotice={setNotice} onUnauthorized={clearSession} />
           </section>
+          </>
         )}
         </div>
         <Toast message={notice} onDismiss={dismissNotice} />

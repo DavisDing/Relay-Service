@@ -96,7 +96,7 @@ func run() error {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level(cfg.LogLevel)})))
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
-	if err := os.MkdirAll(cfg.DataDir, 0700); err != nil {
+	if err := storage.EnsurePrivateDir(cfg.DataDir); err != nil {
 		return err
 	}
 	localLock, err := storage.LockFile(filepath.Join(cfg.DataDir, "instance.lock"))
@@ -130,7 +130,7 @@ func run() error {
 	}
 	defer db.Close()
 	if cfg.DatabaseURL != "" {
-		if err := prepareSchema(connectCtx, db, cfg.MigrationDatabaseURL, func(ctx context.Context, databaseURL string) (schemaMigrator, error) {
+		if err := prepareSchema(connectCtx, db, cfg.DatabaseURL, func(ctx context.Context, databaseURL string) (schemaMigrator, error) {
 			return storage.OpenPostgres(ctx, databaseURL, 2)
 		}); err != nil {
 			return err
@@ -164,7 +164,7 @@ func run() error {
 	if err := prepareLocalInitial(connectCtx, &cfg, accessSvc); err != nil {
 		return err
 	}
-	if err := prepareInitialAdministrator(connectCtx, accessSvc, &cfg, os.Stderr); err != nil {
+	if err := prepareInitialAdministrator(ctx, accessSvc, &cfg, os.Stderr); err != nil {
 		return err
 	}
 	engine := monitor.New(db, accessSvc)

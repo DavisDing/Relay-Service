@@ -61,7 +61,7 @@ images = json.load(open(sys.argv[1], encoding="utf-8"))
 assert len(images) == 1, "expected one resolved image"
 config = images[0]["Config"]
 user = config.get("User", "")
-assert user and user.split(":", 1)[0] not in ("0", "root"), "image must default to a non-root user"
+assert user == "0:0", "image must default to root UID/GID 0:0"
 assert config.get("Entrypoint") == ["/relay"], "image entrypoint must be /relay"
 assert "RELAY_DATA_DIR=/data" in config.get("Env", []), "missing default persistent data directory"
 assert config.get("Healthcheck", {}).get("Test") == ["CMD", "/relay", "healthcheck"], "missing image health check"
@@ -73,7 +73,7 @@ if sys.argv[2]:
     assert labels["org.opencontainers.image.version"] == sys.argv[2], "OCI version differs from expected release"
 if sys.argv[3]:
     assert labels["org.opencontainers.image.revision"] == sys.argv[3], "OCI revision differs from expected commit"
-print("PASS: Linux image, non-root default user, entrypoint and OCI identity")
+print("PASS: Linux image, root default user, direct /relay entrypoint and OCI identity")
 PY
 
 # These commands have no database environment and no network access.

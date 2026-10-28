@@ -19,8 +19,7 @@ INPUTS = ('deploy/nas/docker-compose.yaml', 'deploy/nas/docker-compose.settings.
           'deploy/nas/docker-compose.network.example.yaml',
           'deploy/nas/docker-compose.postgres.example.yaml', 'deploy/nas/postgres.compose.yaml',
           'deploy/nas/init-db/001-roles.sh', 'docs/nas/STORAGE.md', 'deploy/nas/.env.example', 'deploy/nas/generate-env.sh', 'scripts/package-release.sh')
-SECRETS = ('POSTGRES_SUPERUSER_PASSWORD', 'RELAY_DB_PASSWORD', 'RELAY_MIGRATOR_PASSWORD',
-           'RELAY_APP_PASSWORD', 'RELAY_BOOTSTRAP_TOKEN', 'RELAY_ENCRYPTION_KEY')
+SECRETS = ('POSTGRES_SUPERUSER_PASSWORD', 'RELAY_APP_PASSWORD', 'RELAY_BOOTSTRAP_TOKEN', 'RELAY_ENCRYPTION_KEY')
 
 
 class PackageReleaseTests(unittest.TestCase):
@@ -96,6 +95,12 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertIn('automatically applies only pending SQL files', (nas / 'README.txt').read_text())
         self.assertNotIn('  postgres:', compose)
         self.assertIn('image: postgres:latest', (nas / 'postgres.compose.yaml').read_text())
+        postgres = (nas / 'postgres.compose.yaml').read_text()
+        self.assertNotIn('RELAY_MIGRATOR_PASSWORD', postgres)
+        self.assertNotIn('RELAY_DB_PASSWORD', postgres)
+        overlay = (nas / 'docker-compose.postgres.example.yaml').read_text()
+        self.assertIn('${RELAY_DATABASE_URL:?', overlay)
+        self.assertNotIn('RELAY_MIGRATION_DATABASE_URL', overlay)
         self.assertNotIn('./init-db/001-roles.sh:', compose)
         self.assertNotIn('entrypoint:', compose)
         self.assertNotIn('networks:', compose)

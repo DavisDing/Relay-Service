@@ -8,9 +8,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?set PostgreSQL administrator password}
-      RELAY_DB_PASSWORD: ${RELAY_DB_PASSWORD:?set Relay owner password}
-      RELAY_MIGRATOR_PASSWORD: ${RELAY_MIGRATOR_PASSWORD:?set Relay schema password}
-      RELAY_APP_PASSWORD: ${RELAY_APP_PASSWORD:?set Relay business password}
+      RELAY_APP_PASSWORD: ${RELAY_APP_PASSWORD:?set Relay database password}
     volumes:
       - postgres-data:/var/lib/postgresql
       - ./init-db/001-roles.sh:/docker-entrypoint-initdb.d/001-relay.sh:ro

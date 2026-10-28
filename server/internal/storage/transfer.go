@@ -218,8 +218,7 @@ func TransferSQLite(ctx context.Context, source *SQLite, target *Postgres) (Tran
 	}
 	// Transactional infrastructure, separate from the application records being
 	// verified. A nonempty target is never overwritten or merged.
-	if _, err := tx.Exec(ctx, `CREATE TABLE IF NOT EXISTS relay_sqlite_transfer (id INTEGER PRIMARY KEY CHECK(id=1),receipt JSONB NOT NULL);
-DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='relay_app') THEN GRANT SELECT ON relay_sqlite_transfer TO relay_app; END IF; END $$;`); err != nil {
+	if _, err := tx.Exec(ctx, `CREATE TABLE IF NOT EXISTS relay_sqlite_transfer (id INTEGER PRIMARY KEY CHECK(id=1),receipt JSONB NOT NULL)`); err != nil {
 		return zero, err
 	}
 	var receipt []byte

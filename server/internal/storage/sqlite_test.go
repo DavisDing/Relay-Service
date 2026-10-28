@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -210,5 +211,123 @@ func TestSQLiteTransferIntegration(t *testing.T) {
 	}
 	if _, err := TransferSQLite(ctx, s, target); err == nil {
 		t.Fatal("overwrote changed target")
+	}
+}
+
+func TestSQLiteBackupFailureRemovesOnlyItsOwnDestination(t *testing.T) {
+	s, err := OpenSQLite(context.Background(), filepath.Join(t.TempDir(), "source"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	path := filepath.Join(t.TempDir(), "backup")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := s.Backup(ctx, path); err == nil {
+		t.Fatal("canceled backup succeeded")
+	}
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		t.Fatalf("incomplete backup remains: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("existing backup"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Backup(context.Background(), path); err == nil {
+		t.Fatal("accepted existing destination")
+	}
+	if raw, err := os.ReadFile(path); err != nil || string(raw) != "existing backup" {
+		t.Fatal("removed or changed existing backup", err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(path, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Backup(context.Background(), link); err == nil {
+		t.Fatal("accepted symlink backup")
+	}
+	if _, err := os.Lstat(link); err != nil {
+		t.Fatal("removed existing symlink", err)
+	}
+}
+
+func TestSQLiteTransferFailureIntegration(t *testing.T) {
+	target, _ := postgresIntegrationStores(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := target.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	source, err := OpenSQLite(ctx, filepath.Join(t.TempDir(), "source"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	if err := source.Update(ctx, func(tx Tx) error {
+		if err := tx.Put("data", "a", 1); err != nil {
+			return err
+		}
+		return tx.Put("data", "b", 2)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	assertNotRetired := func() {
+		t.Helper()
+		var value string
+		if err := source.db.QueryRowContext(ctx, "SELECT value FROM relay_local_metadata WHERE name='migrated_to_postgres'").Scan(&value); !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("failed transfer retired source: %q, %v", value, err)
+		}
+	}
+	if err := target.Update(ctx, func(tx Tx) error { return tx.Put("existing", "keep", "untouched") }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := TransferSQLite(ctx, source, target); err == nil {
+		t.Fatal("accepted nonempty target")
+	}
+	var existing string
+	if err := target.View(ctx, func(tx Tx) error { return tx.Get("existing", "keep", &existing) }); err != nil || existing != "untouched" {
+		t.Fatal("changed existing target", err)
+	}
+	assertNotRetired()
+	if _, err := target.pool.Exec(ctx, `DELETE FROM relay_records; DELETE FROM relay_sequences;
+CREATE FUNCTION fail_copy() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected copy failure'; END $$;
+CREATE TRIGGER fail_copy BEFORE INSERT ON relay_records FOR EACH ROW WHEN (NEW.record_key='b') EXECUTE FUNCTION fail_copy();`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := TransferSQLite(ctx, source, target); err == nil {
+		t.Fatal("copy failure committed")
+	}
+	var count int64
+	if err := target.pool.QueryRow(ctx, "SELECT (SELECT count(*) FROM relay_records)+(SELECT count(*) FROM relay_sequences)").Scan(&count); err != nil || count != 0 {
+		t.Fatalf("partial target writes remain: %d, %v", count, err)
+	}
+	var receiptExists bool
+	if err := target.pool.QueryRow(ctx, "SELECT to_regclass('relay_sqlite_transfer') IS NOT NULL").Scan(&receiptExists); err != nil || receiptExists {
+		t.Fatalf("failed transfer retained receipt infrastructure: %t, %v", receiptExists, err)
+	}
+	assertNotRetired()
+	if _, err := target.pool.Exec(ctx, "DROP TRIGGER fail_copy ON relay_records; DROP FUNCTION fail_copy()"); err != nil {
+		t.Fatal(err)
+	}
+	// Force a failure after the target transaction commits its receipt.
+	if _, err := source.db.ExecContext(ctx, `CREATE TRIGGER fail_retire BEFORE INSERT ON relay_local_metadata WHEN NEW.name='migrated_to_postgres' BEGIN SELECT RAISE(ABORT,'injected retirement failure'); END;`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := TransferSQLite(ctx, source, target); err == nil {
+		t.Fatal("source retirement failure was ignored")
+	}
+	assertNotRetired()
+	var raw []byte
+	if err := target.pool.QueryRow(ctx, "SELECT receipt FROM relay_sqlite_transfer WHERE id=1").Scan(&raw); err != nil {
+		t.Fatal("committed transfer lost receipt", err)
+	}
+	if _, err := source.db.ExecContext(ctx, "DROP TRIGGER fail_retire"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := TransferSQLite(ctx, source, target)
+	if err != nil || got.Records != 2 || got.Sequences != 1 {
+		t.Fatalf("could not recover committed receipt: %+v, %v", got, err)
+	}
+	if err := CheckSQLiteCutover(ctx, source.path, target); err == nil {
+		t.Fatal("cutover accepted source still locked by maintenance")
 	}
 }

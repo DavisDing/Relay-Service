@@ -385,7 +385,7 @@ func (t *postgresTx) Count(bucket string, options CountOptions) (int64, error) {
 	// time.Time{} is serialized as 0001-01-01T00:00:00Z, so IS NOT NULL alone
 	// would count records that expiredCheck intentionally leaves in place.
 	timestamp := fmt.Sprintf("(NULLIF(value->>'%s',''))::timestamptz", options.TimeField)
-	if (bucket == "monitor.history" && options.TimeField == "completed_at") || (bucket == AuditBucket && options.TimeField == "at") {
+	if options.TimeField == retentionField(bucket) {
 		// The database trigger derives this typed column from the JSON record.
 		// A plain timestamp index avoids non-immutable text casts in indexes.
 		timestamp = "retention_at"

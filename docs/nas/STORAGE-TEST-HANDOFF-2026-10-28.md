@@ -23,7 +23,7 @@
 3. 用真实 PostgreSQL 和脚本创建的低权限账号测试：业务账号禁止DDL，迁移账号可初始化/升级，业务账号可读迁移回执；重复初始化与中途失败不覆盖已有库/口令。LiteLLM分库不受影响。
 4. 迁移拒绝非空目标/正在运行的目标；提交前故障全部回滚；提交回执后源标记前中断可以重试；migration.pending 阻止旧源重新启动；重复迁移、目标变更/新增数据、连接变量遗漏、连接失败不能误切空库。校验大整数JSON、排序、时间精度、序列和原密钥。
 5. 备份路径预先存在或为符号链接时拒绝覆盖；VACUUM INTO 私有空文件、磁盘满/取消/权限不足后的状态明确，部分备份不会覆盖或误判成功。恢复时隔离源/目标，并保留原密钥与授权风险边界。
-6. 最终嵌入Web构建、CGO_ENABLED=0 Linux amd64/arm64、默认镜像非root数据卷可写、Compose默认/设置/网络/官方PG组合、格式3部署包和发布工作流。不要发布或访问真实NAS来代替本地验证。
+6. 最终嵌入Web构建、CGO_ENABLED=0 Linux amd64/arm64、默认镜像 root（0:0）直接执行 /relay、NAS绑定目录数据可读写及重启持久化、Compose默认/设置/网络/官方PG组合、格式3部署包和发布工作流。不要发布或访问真实NAS来代替本地验证。
 
 从仓库入口核实后可执行：
 
@@ -41,3 +41,15 @@ RELAY_TEST_DATABASE_URL='postgres://测试账号:测试密码@127.0.0.1:测试�
 ## 本机临时工具（可选，不是项目依赖）
 
 Go位于 `/private/tmp/relay-nas-tools-20261028/go/bin`，模块/构建缓存为 `/private/tmp/relay-nas-go-modules`、`/private/tmp/relay-nas-go-cache`。临时PostgreSQL18.3二进制位于 `/private/tmp/relay-sqlite-postgres-check/pg/bin`；initdb在沙箱内创建共享内存失败，未启动测试数据库。若继续使用，需要相应的本机监听/共享内存权限；不要改系统服务。工具可能被系统清理。Docker当前不可用。
+
+## 后续补充：数据库页面说明与前置检查（未执行测试）
+
+用户随后要求将手工准备数据库/账号的步骤内嵌到“连接已有PostgreSQL”页面，或作为前置检查。新增 web/src/DatabasePanel.tsx；系统设置中展示当前后端、可展开的 psql 建库/账号说明及一次性连接表单。新增 GET /api/v1/database、POST /api/v1/database/postgres/preflight，均要求已完成改密的管理员；POST沿用来源/CSRF检查。每实例一次检查，超时8秒；只读事务检查普通账号、public schema访问/建表/默认schema、已有表/序列/视图，使用固定脱敏错误，不持久化凭据。
+
+此切片不包含页面切库或迁移。检查通过仅表示前置条件；已有对象的目标被保守拒绝，完整DDL权限和迁移结果仍需后续维护命令核对。普通SQLite运行不会主动探测PostgreSQL。页面默认TLS verify-full，同机私有网络需显式选择disable；提交密码后清空输入框，不写URL/浏览器持久存储。
+
+请补测：管理员/设备/未登录/首次改密权限、CSRF；缺库/认证/权限/非默认schema/已有对象/超级用户提示；TLS/IPv6/主机校验/超时/并发检查；错误不得包含密码或底层SQL；只读操作不创建对象、不改变业务数据/当前后端；表单修改清除旧结果、退出会话/切页后异步响应不更新新会话；前端类型与构建。按用户要求，没有运行本切片测试、构建或真实连接。
+
+## 后续补充：默认 root 运行（未执行测试）
+
+用户最终确认直接默认 root，替代初始化后降权方案。Dockerfile 使用 USER 0:0、ENTRYPOINT /relay；移除独立启动器及 PUID/PGID 配置。默认 Compose 固定 container_name: relay-service；现有容器可显式设置 user: "0:0" 后保留数据挂载重新创建。容器结构检查同步为 root/直接入口断言；此次未执行测试、构建或部署。需核对首次 NAS 绑定目录写锁、SQLite/直连 PostgreSQL 启动和原数据重启持久化；只读/ACL/root-squash 不应误报成功。

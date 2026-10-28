@@ -16,6 +16,43 @@ permissions:
   contents: read
 
 jobs:
+  postgres-integration:
+    name: PostgreSQL and SQLite transfer integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: relay_test
+          POSTGRES_PASSWORD: disposable-ci-password
+          POSTGRES_DB: relay_test
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U relay_test -d relay_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      RELAY_REQUIRE_POSTGRES_TESTS: "1"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source-ref }}
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.3"
+          cache-dependency-path: server/go.sum
+      - name: Run mandatory database and transfer tests without caching
+        working-directory: server
+        env:
+          RELAY_TEST_DATABASE_URL: postgres://relay_test:disposable-ci-password@127.0.0.1:${{ job.services.postgres.ports[5432] }}/relay_test?sslmode=disable
+        run: go test -race -count=1 -v ./internal/storage -run 'Postgres|SQLiteTransfer|RetentionMapping'
+
   verify:
     name: Web, Go, packages and containers
     runs-on: ubuntu-24.04
@@ -123,8 +160,8 @@ jobs:
         run: |
           {
             echo '### NAS delivery validation boundaries'
-            echo '- Linux amd64: Docker build and container checks without PostgreSQL.'
+            echo '- Linux amd64: Docker build, root default user, direct entrypoint and container structure/CLI checks without PostgreSQL.'
             echo '- Linux arm64: build and ELF architecture check only; no runtime or device acceptance.'
-            echo '- PostgreSQL integration: intentionally skipped; no test database is configured.'
+            echo '- PostgreSQL and SQLite transfer integration run in the separate mandatory PostgreSQL job.'
             echo '- NAS, UGOS Projects, upstream services and browser/device acceptance remain separate.'
           } >> "$GITHUB_STEP_SUMMARY"

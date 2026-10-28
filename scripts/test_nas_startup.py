@@ -15,8 +15,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'deploy/nas/start-postgres.sh'
-NAMES = ('POSTGRES_SUPERUSER_PASSWORD', 'RELAY_DB_PASSWORD', 'RELAY_MIGRATOR_PASSWORD',
-         'RELAY_APP_PASSWORD', 'RELAY_ENCRYPTION_KEY', 'RELAY_INITIAL_PASSWORD')
+NAMES = ('POSTGRES_SUPERUSER_PASSWORD', 'RELAY_APP_PASSWORD', 'RELAY_ENCRYPTION_KEY', 'RELAY_INITIAL_PASSWORD')
 
 
 class NASStartupTests(unittest.TestCase):
@@ -35,8 +34,6 @@ class NASStartupTests(unittest.TestCase):
 set -eu
 test "$1" = postgres
 test -n "$POSTGRES_PASSWORD"
-test -n "$RELAY_DB_PASSWORD"
-test -n "$RELAY_MIGRATOR_PASSWORD"
 test -n "$RELAY_APP_PASSWORD"
 printf called > "$RELAY_TEST_MARKER"
 ''')

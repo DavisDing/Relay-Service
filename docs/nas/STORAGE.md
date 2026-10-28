@@ -8,13 +8,23 @@
 
 首次账号 `admin`，从 Relay 容器日志读取临时密码，首次登录强制修改。`encryption.key` 必须与数据一起保留。临时密码文件在改密事务成功后删除，旧容器日志/外部日志备份不会自动擦除。
 
+启动和迁移入口会将已有 `RELAY_DATA_DIR` 的权限收紧为0700，无法修改则报错退出；该路径末端不能是符号链接。请使用 Relay 专用数据目录，避免指向共享父目录。临时密码清理失败会告警并每30秒后台重试，成功或进程退出后结束；重启仍会处理已初始化账号的残留文件。
+
+容器镜像默认使用 root（UID/GID `0:0`）直接执行 `/relay`，Relay 本身作为 PID 1；不增加权限初始化进程，不递归修改数据属主，不需要 UID/GID 环境参数。应用继续将专用数据目录收紧为 0700，私密文件保持原有权限与锁保护。
+
+显式 Compose `user: "UID:GID"` 可覆盖镜像默认身份，部署者需保证目录和已有文件对该身份可读写。只读挂载、NAS ACL、root-squash 和外置文件权限仍可能限制访问。新默认需要重新构建并发布镜像；旧镜像可添加 `user: "0:0"` 后重建容器，保留原有数据挂载，不删除数据卷。
+
 SQLite 使用 WAL、单连接、4MiB 页面缓存目标和短事务，保留查询有索引；不承诺固定内存或吞吐。放在 NAS 本机文件系统，不放 SMB/NFS、OneDrive 等同步目录。只运行一个 Relay 实例，同文件的第二实例和维护命令会被 OS 锁拒绝。备份前停止 Relay，备份整个数据目录；不要在线只复制主 `.sqlite` 文件而漏掉 WAL。重建保留卷，禁止用 `down -v` 排错。
 
 ## 2. 首装直接连接 PostgreSQL
 
 ### 2.1 准备 Relay 的数据库与账号
 
-可以使用已有官方 PostgreSQL，也可选用随包的 `postgres.compose.yaml`。脚本 `init-db/001-roles.sh` 只创建 `relay` 库、`relay_owner`、`relay_migrator` 和 `relay_app`，不改 LiteLLM 库。已有同名角色/库时停止并核对，不当成空库覆盖或重置口令。脚本不是版本升级脚本。
+可先在 Relay 的“系统设置 → 数据库 → 连接已有 PostgreSQL”中查看内嵌准备说明，并填写主机、端口、数据库、账号、密码和TLS模式，点击“检查连接与权限”。检查从 Relay 容器发起，提示库不存在、认证失败、权限不足或目标已有对象等问题。该入口只读，不保存密码或切换数据库；页面内迁移尚未开放。普通SQLite部署无需填写或检查。已有SQLite数据仍按第3节停机迁移，不能因检查通过直接改连接后启动。
+
+PostgreSQL 只需配置一个 `RELAY_DATABASE_URL`；同一专用账号负责日常读写、首次建表、结构升级和停机迁移。空库首次建表需 `GRANT USAGE, CREATE ON SCHEMA public TO relay_app;`，该账号将拥有它创建的表和函数。已有库还需原对象的相应访问/修改权限；仅授予 schema CREATE 不会转移其他账号创建对象的所有权。页面检查不会替管理员建库或授权。
+
+可以使用已有官方 PostgreSQL，也可选用随包的 `postgres.compose.yaml`。脚本 `init-db/001-roles.sh` 只创建 `relay` 库和普通账号 `relay_app`，授予其连接及 schema 使用/建表权限，不改 LiteLLM 库。已有同名账号/库时停止并核对，不当成空库覆盖或重置口令。脚本不是版本升级脚本。
 
 可选生成新的 PostgreSQL 密码模板（SQLite 默认不需要）：
 
@@ -22,7 +32,7 @@ SQLite 使用 WAL、单连接、4MiB 页面缓存目标和短事务，保留查�
 sh generate-env.sh .env
 ```
 
-如果已有 `.env`，手工补充 `POSTGRES_SUPERUSER_PASSWORD`、`RELAY_DB_PASSWORD`、`RELAY_MIGRATOR_PASSWORD`、`RELAY_APP_PASSWORD`；不要用新生成值覆盖原数据库秘密。密码建议至少32字符、URL安全随机值。模板中的 `RELAY_ENCRYPTION_KEY` 是高级导入项，连接示例不传给 Relay；默认仍由 Relay 生成并保存本地密钥。
+如需新建附带的 PostgreSQL 服务，`.env` 只需数据库管理员的 `POSTGRES_SUPERUSER_PASSWORD` 和 Relay 账号的 `RELAY_APP_PASSWORD`；连接已有库时沿用原账号密码，不要求生成这些变量。不要用新生成值覆盖原数据库秘密。密码建议至少32字符、URL安全随机值。模板中的 `RELAY_ENCRYPTION_KEY` 是高级导入项，连接示例不传给 Relay；默认仍由 Relay 生成并保存本地密钥。
 
 使用附带官方镜像服务首次创建（沿用主项目名以便共享默认网络和原数据卷）：
 
@@ -36,18 +46,17 @@ docker compose -p relay-service -f docker-compose.yaml -f postgres.compose.yaml 
 docker compose -p relay-service -f docker-compose.yaml -f postgres.compose.yaml exec -T postgres sh /docker-entrypoint-initdb.d/001-relay.sh
 ```
 
-连接任意已有 PostgreSQL：在有 `psql` 的环境中执行同一脚本，设置 `PGHOST`、`PGPORT`、`PGPASSWORD`、`POSTGRES_USER`（管理员）、`POSTGRES_DB=postgres` 和三个 Relay 密码环境变量。管理员凭据只用于这次操作，不放进 Relay 容器。初始化中途失败先检查已创建对象，保留数据，不能删除数据库重试。
+连接任意已有 PostgreSQL：若尚未创建库/账号，在有 `psql` 的环境中执行同一脚本，设置 `PGHOST`、`PGPORT`、`PGPASSWORD`、`POSTGRES_USER`（管理员）、`POSTGRES_DB=postgres` 和 `RELAY_APP_PASSWORD`。已有库/账号则沿用，核对权限即可。管理员凭据只用于这次准备，不放进 Relay 容器。初始化中途失败先检查已创建对象，保留数据，不能删除数据库重试。
 
 ### 2.2 配置并启动 Relay
 
-在 `.env` 中添加两条连接，密码与上一节一致：
+在 `.env` 中添加一条连接，使用已有的专用账号及密码：
 
 ```dotenv
-RELAY_DATABASE_URL=postgres://relay_app:URL编码后的业务密码@postgres:5432/relay?sslmode=disable
-RELAY_MIGRATION_DATABASE_URL=postgres://relay_migrator:URL编码后的初始化密码@postgres:5432/relay?sslmode=disable
+RELAY_DATABASE_URL=postgres://relay_app:URL编码后的密码@postgres:5432/relay?sslmode=disable
 ```
 
-`sslmode=disable` 仅是同机私有 Docker 网络示例；远程数据库按部署要求使用证书和 TLS。两条连接必须指向同一主机/端口/库和相同选项。Relay 首次启动自动建表，业务账号没有建表/建库权限。PostgreSQL 的超级用户与所有者密码不传给 Relay。
+`sslmode=disable` 仅是同机私有 Docker 网络示例；远程数据库按部署要求使用证书和 TLS。Relay 首次启动使用该账号自动建表；不要求超级用户或建库权限。不再提供独立迁移连接配置。已有对象的所有者不自动变更。
 
 附带官方服务一起运行：
 
@@ -67,7 +76,7 @@ docker compose -f docker-compose.yaml -f docker-compose.postgres.example.yaml up
 
 ## 3. 从 SQLite 迁移到 PostgreSQL
 
-这是显式停机迁移，不是自动探测、双写或故障切换。目标必须是 Relay 独立空库（表结构可以预先初始化），不能合并一个已经使用的 Relay 实例。先按第2节准备好 PostgreSQL 库、账号和两条连接。**保留相同的 `relay-data` 卷、项目名、数据路径和 `encryption.key`；不要先启动使用 PostgreSQL 的 Relay。**
+这是显式停机迁移，不是自动探测、双写或故障切换。目标必须是 Relay 独立空库（表结构可以预先初始化），不能合并一个已经使用的 Relay 实例。先按第2节准备好 PostgreSQL 库、账号和一条 `RELAY_DATABASE_URL`。**保留相同的 `relay-data` 卷、项目名、数据路径和 `encryption.key`；不要先启动使用 PostgreSQL 的 Relay。**
 
 ```sh
 # 停止原 SQLite Relay，释放源文件锁。
@@ -86,7 +95,7 @@ docker compose -f docker-compose.yaml -f docker-compose.postgres.example.yaml ru
 4. 在同一目标事务内校验记录数、序列数、语义 JSON 内容及更新时间的 SHA-256，核对成功才提交。失败回滚本次目标业务写入；已初始化的空表可能保留。
 5. 保存事务内迁移回执，再标记源 SQLite 已迁移，并绑定本地 PostgreSQL 目标。源文件和备份保留。目标提交后若中断，重复命令会校验回执和完整目标，匹配才补完源标记；目标已产生新数据则拒绝覆盖。
 
-开始复制前会写入 `/data/migration.pending`，在完成核对、源标记和目标绑定后删除。该标记存在时普通启动会停止，避免提交结果不确定时继续写旧 SQLite；修复错误后，对相同目标重跑原迁移命令。即使错误表示事务已回滚，也保留标记供明确恢复，不自动重开源库。不要直接删除标记绕过检查；若决定取消，先确认目标没有成功提交，并使用迁移前备份与原密钥恢复到独立数据卷。每次重试默认新建备份；手工指定的备份路径必须不存在，失败留下的备份也不自动覆盖。
+开始复制前会写入 `/data/migration.pending`，在完成核对、源标记和目标绑定后删除。该标记存在时普通启动会停止，避免提交结果不确定时继续写旧 SQLite；修复错误后，对相同目标重跑原迁移命令。即使错误表示事务已回滚，也保留标记供明确恢复，不自动重开源库。不要直接删除标记绕过检查；若决定取消，先确认目标没有成功提交，并使用迁移前备份与原密钥恢复到独立数据卷。每次重试默认新建备份；手工指定的备份路径必须不存在。备份操作失败会尝试删除本次创建的占位或不完整文件；删除失败也返回错误。后续迁移失败时已完成的备份保留，已有备份绝不自动覆盖。
 
 成功输出记录数、序列数、SHA-256 与备份路径，然后使用 PostgreSQL 配置启动：
 
@@ -103,3 +112,13 @@ docker compose -f docker-compose.yaml -f docker-compose.postgres.example.yaml up
 - 已有数据缺失密钥、密钥与数据库指纹不一致、SQLite 未知版本或 PostgreSQL schema 损坏均拒绝启动。不能自动重建密钥或删库。
 - 历史 `relay-secrets` 部署可显式设置 `RELAY_DEPLOYMENT_FILE` 与 `RELAY_INITIAL_PASSWORD_FILE` 并挂载原秘密卷，继续使用原 PostgreSQL；首次导入本地密钥时沿用原值。不要把旧 PostgreSQL 卷当作 SQLite 数据卷。
 - PostgreSQL 主版本升级仍按官方流程迁移；换 `latest` 镜像不等于完成数据升级。数据库备份与 Relay 密钥分别保留。
+
+## 5. 数据库回归入口
+
+本地默认测试不要求 PostgreSQL；设置专用、以 `_test` 结尾的 `RELAY_TEST_DATABASE_URL` 与 `RELAY_REQUIRE_POSTGRES_TESTS=1` 后，在 `server/` 执行：
+
+```sh
+go test -race -count=1 -v ./internal/storage -run 'Postgres|SQLiteTransfer|RetentionMapping'
+```
+
+强制模式缺少连接配置会失败，避免把跳过误当作通过。CI 与 Release 共用 `verify.yml` 的独立 PostgreSQL 服务及必跑任务；迁移验证包括拒绝运行中/非空/已变化的目标、复制中途失败回滚，以及目标已提交但源标记失败后的回执重试。SQLite 与 PostgreSQL 保留字段映射有离线迁移合同检查和真实数据库一致性测试；SQL 触发器继续覆盖直接 SQL 与迁移写入，不改动已应用的迁移文件。

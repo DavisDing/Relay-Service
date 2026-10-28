@@ -10,6 +10,7 @@ import (
 	"relayservice/internal/storage"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestInitialCredentialLifecycle(t *testing.T) {
@@ -96,7 +97,8 @@ func TestPendingRestartPreservesOriginalCredential(t *testing.T) {
 }
 
 func TestCleanupFailureDoesNotUndoCommittedPasswordChange(t *testing.T) {
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	store := storage.NewMemory()
 	defer store.Close()
 	svc, _ := access.New(store, make([]byte, 32), "", false)
@@ -124,5 +126,92 @@ func TestCleanupFailureDoesNotUndoCommittedPasswordChange(t *testing.T) {
 	}
 	if _, err := svc.Login(ctx, "admin", initial); err == nil {
 		t.Fatal("old initial credential survived")
+	}
+	// Restore a deletable file without restarting the service. The real
+	// post-commit callback must have scheduled the 30-second retry worker.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(initial), 0600); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(35 * time.Second)
+	for {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			break
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("committed change did not retry credential cleanup without a restart")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestInitialPasswordCleanupRetriesUntilSuccessful(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "password")
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	attempts := make(chan error, 20)
+	resume := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		retryInitialPasswordCleanup(ctx, 10*time.Millisecond, func() error {
+			err := config.RemoveInitialPassword("", path)
+			attempts <- err
+			if err != nil {
+				select {
+				case <-resume:
+				case <-ctx.Done():
+				}
+			}
+			return err
+		})
+	}()
+	select {
+	case err := <-attempts:
+		if err == nil {
+			t.Fatal("invalid credential path accepted")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("cleanup did not retry")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("expired temporary password"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	close(resume)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("cleanup did not finish after permissions recovered")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("temporary password remains", err)
+	}
+}
+
+func TestInitialPasswordCleanupStopsOnShutdown(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		retryInitialPasswordCleanup(ctx, time.Hour, func() error {
+			t.Error("cleanup ran after shutdown")
+			return nil
+		})
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("cleanup worker did not stop")
 	}
 }
