@@ -9,3 +9,7 @@ server/bin/
 *.out
 dist/
 __pycache__/
+
+# Hermes 审计产物与临时构建目录（不进版本库）
+output/
+temp/
