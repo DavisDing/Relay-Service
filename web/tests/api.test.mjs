@@ -99,7 +99,7 @@ test('invalidation during parsing suppresses a stale malformed-body error', asyn
 test('current network failures remain visible', async () => {
   const { api } = await freshAPI();
   globalThis.fetch = async () => { throw new Error('network-offline'); };
-  await assert.rejects(api('/fixture'), /network-offline/);
+  await assert.rejects(api('/fixture'), error => error.status === 0 && /无法连接 Relay/.test(error.message) && !error.message.includes('network-offline'));
 });
 
 test('a new generation can immediately read the new login identity', async () => {
@@ -109,4 +109,14 @@ test('a new generation can immediately read the new login identity', async () =>
     ok: true, status: 200, json: async () => ({ data: { id: 'admin', role: 'admin' } }),
   });
   assert.equal((await api('/auth/me')).data.id, 'admin');
+});
+
+test('API failures use Chinese stable codes and never expose arbitrary server errors', async () => {
+  const { api } = await freshAPI();
+  for (const [code, status, expected] of [['invalid_request', 400, '输入无效'], ['internal_error', 500, '操作未能完成'], ['new_error', 502, '操作未能完成']]) {
+    globalThis.fetch = async () => ({ ok: false, status, json: async () => ({ error: { code, message: 'postgres://SECRET@host failed' } }) });
+    await assert.rejects(api('/fixture'), error => error.message.includes(expected) && !error.message.includes('SECRET'));
+  }
+  globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => null });
+  await assert.rejects(api('/fixture'), /无效响应/);
 });

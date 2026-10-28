@@ -17,7 +17,7 @@ function load(name) {
   const module = { exports: {} };
   new Function('require', 'module', 'exports', code)(specifier => {
     if (!specifier.startsWith('.')) return require(specifier);
-    return load(specifier.slice(2) + (specifier === './presentation' || specifier === './api' ? '.ts' : '.tsx'));
+    return load(specifier.slice(2) + (['./presentation', './api', './solar'].includes(specifier) ? '.ts' : '.tsx'));
   }, module, module.exports);
   modules.set(name, module.exports);
   return module.exports;
@@ -185,4 +185,52 @@ test('alert panel preserves evidence, device read access and sequential ack guar
   assert.match(html, /未读/);
   assert.match(html, /disabled=""[^>]*>本页标记已读/);
   assert.doesNotMatch(html, /静默 1 小时/);
+});
+
+test('subscription and model details expose unknown evidence instead of inventing health or quotas', () => {
+  const { CheckDetails } = load('CheckDetails.tsx');
+  const subscription = renderToStaticMarkup(React.createElement(CheckDetails, { check: { completed_at: '2026-10-28T00:00:00Z', details: {
+    source: '/providers/proxies', count: 2, subscriptions: [{name:'no-info'}, {name:'zero-fields', info:{upload:0,download:0,total:0,expire:0}}],
+  } } }));
+  assert.match(subscription, /上游未提供流量和到期信息/);
+  assert.match(subscription, /到期 未提供/);
+  assert.doesNotMatch(subscription, /1970|无限|健康/);
+  const models = renderToStaticMarkup(React.createElement(CheckDetails, { check: { details: {
+    source: '/v1/models', count: 201, truncated: true, models: [{ id: '<script>model</script>', status:'not_tested'}],
+  } } }));
+  assert.match(models, /推理未测试/);
+  assert.match(models, /失败率未知/);
+  assert.match(models, /仅展示前 200 项/);
+  assert.match(models, /&lt;script&gt;/);
+});
+
+test('public status component labels remain distinct from actual inference evidence', () => {
+  const { CheckDetails } = load('CheckDetails.tsx');
+  const html = renderToStaticMarkup(React.createElement(CheckDetails, {check:{details:{
+    source:'/api/v2/summary.json',count:1,components:[{name:'Model API',status:'major_outage'}],
+  }}}));
+  assert.match(html,/严重故障/);
+  assert.match(html,/服务商公布的状态/);
+  assert.match(html,/不代表当前账号或网络下的实际推理结果/);
+});
+
+test('Pipio reports its own evidence and fractional uptime without inventing source time', () => {
+  const { CheckDetails } = load('CheckDetails.tsx');
+  const html=renderToStaticMarkup(React.createElement(CheckDetails,{check:{details:{source:'/api/uptime/status',count:1,public_status:{count:1,components:[{name:'example',status:'unhealthy',uptime:0.995,heartbeats:['healthy','unhealthy']} ]}}}}));
+  assert.match(html,/99.50%/);
+  assert.match(html,/上游未提供逐条时间/);
+  assert.match(html,/未提供，不能据采集时间证明探针新鲜度/);
+  assert.doesNotMatch(html,/过去24小时|实时可用|推理通过/);
+});
+
+test('gateway samples expose unknown and cache results independently of model catalog', () => {
+  const { CheckDetails }=load('CheckDetails.tsx');
+  const html=renderToStaticMarkup(React.createElement(CheckDetails,{check:{details:{source:'gateway',gateway:{catalog_state:'available',deployments_state:'unauthorized',logs_state:'partial',model_count:1,deployment_count:0,models:[{id:'model-a'}],rows:4,total:500,sampled:true,traffic:[{model:'model-a',success:1,failure:1,unknown:1,cache_hits:1,last_at:'2026-10-28T01:00:00Z'}]}}}}));
+  assert.match(html,/权限不足/);assert.match(html,/有限样本/);assert.match(html,/50.0%/);assert.match(html,/未知 1 · 缓存 1/);assert.match(html,/目录可见不代表推理可用/);
+});
+
+test('mihomo quota and existing node history preserve stale evidence labels', () => {
+  const { CheckDetails }=load('CheckDetails.tsx');
+  const html=renderToStaticMarkup(React.createElement(CheckDetails,{check:{details:{source:'/providers/proxies',mihomo:{subscription_count:1,subscriptions:[{name:'airport',usage_state:'available',used_bytes:1024,remaining_bytes:2048}],node_count:1,healthy_nodes:0,unhealthy_nodes:0,unknown_nodes:1,stale_nodes:1,proxy_source_state:'available',nodes:[{name:'old-node',type:'ss',state:'unknown',delay_ms:35,freshness:'stale'}]}}}}));
+  assert.match(html,/剩余 2.0 KiB/);assert.match(html,/记录过期/);assert.match(html,/未主动测速/);assert.match(html,/old-node/);
 });

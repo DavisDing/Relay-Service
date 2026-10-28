@@ -10,6 +10,9 @@ const (
 	KindOpenWebUI     = "openwebui"
 	KindOllama        = "ollama"
 	KindMetaCubeXD    = "metacubexd"
+	KindMihomo        = "mihomo"
+	KindOpenAI        = "openai"
+	KindStatuspage    = "statuspage"
 	KindHTTP          = "http"
 	KindTCP           = "tcp"
 
@@ -24,58 +27,65 @@ const (
 )
 
 type ServiceInput struct {
-	ID                string `json:"id,omitempty"`
-	Name              string `json:"name"`
-	Kind              string `json:"kind"`
-	BaseURL           string `json:"base_url"`
-	UIURL             string `json:"ui_url,omitempty"`
-	Group             string `json:"group,omitempty"`
-	Enabled           bool   `json:"enabled"`
-	IntervalSeconds   int    `json:"interval_seconds"`
-	TimeoutSeconds    int    `json:"timeout_seconds"`
-	FailureThreshold  int    `json:"failure_threshold"`
-	RecoveryThreshold int    `json:"recovery_threshold"`
-	AllowPrivate      bool   `json:"allow_private"`
-	Token             string `json:"token,omitempty"`
-	ClearToken        bool   `json:"clear_token,omitempty"`
-	Generation        int64  `json:"generation"`
+	PublicStatus      *PublicStatusConfig `json:"public_status,omitempty"`
+	CollectModels     bool                `json:"collect_models"`
+	CollectLogs       bool                `json:"collect_logs"`
+	ID                string              `json:"id,omitempty"`
+	Name              string              `json:"name"`
+	Kind              string              `json:"kind"`
+	BaseURL           string              `json:"base_url"`
+	UIURL             string              `json:"ui_url,omitempty"`
+	Group             string              `json:"group,omitempty"`
+	Enabled           bool                `json:"enabled"`
+	IntervalSeconds   int                 `json:"interval_seconds"`
+	TimeoutSeconds    int                 `json:"timeout_seconds"`
+	FailureThreshold  int                 `json:"failure_threshold"`
+	RecoveryThreshold int                 `json:"recovery_threshold"`
+	AllowPrivate      bool                `json:"allow_private"`
+	Token             string              `json:"token,omitempty"`
+	ClearToken        bool                `json:"clear_token,omitempty"`
+	Generation        int64               `json:"generation"`
 }
 
 type Service struct {
-	ID                   string     `json:"id"`
-	Name                 string     `json:"name"`
-	Kind                 string     `json:"kind"`
-	BaseURL              string     `json:"base_url"`
-	UIURL                string     `json:"ui_url,omitempty"`
-	Group                string     `json:"group,omitempty"`
-	Enabled              bool       `json:"enabled"`
-	IntervalSeconds      int        `json:"interval_seconds"`
-	TimeoutSeconds       int        `json:"timeout_seconds"`
-	FailureThreshold     int        `json:"failure_threshold"`
-	RecoveryThreshold    int        `json:"recovery_threshold"`
-	AllowPrivate         bool       `json:"allow_private"`
-	Generation           int64      `json:"generation"`
-	CreatedAt            time.Time  `json:"created_at"`
-	UpdatedAt            time.Time  `json:"updated_at"`
-	Tombstone            bool       `json:"tombstone"`
-	TokenCiphertext      string     `json:"-"`
-	CredentialConfigured bool       `json:"credential_configured"`
-	Current              *Check     `json:"current,omitempty"`
-	LastSuccess          *Check     `json:"last_success,omitempty"`
-	LastCheckAt          *time.Time `json:"last_check_at,omitempty"`
-	LastSuccessAt        *time.Time `json:"last_success_at,omitempty"`
-	FailureCount         int        `json:"failure_count"`
-	RecoveryCount        int        `json:"recovery_count"`
-	OpenIncident         bool       `json:"open_incident"`
-	OpenRestriction      bool       `json:"open_restriction"`
-	Status               string     `json:"status"`
-	FreshnessState       string     `json:"freshness"`
-	EvidenceLevel        string     `json:"evidence_level"`
-	InferenceState       string     `json:"inference_state"`
-	UpdateState          string     `json:"update_state"`
+	PublicStatus         *PublicStatusConfig `json:"public_status,omitempty"`
+	CollectModels        bool                `json:"collect_models"`
+	CollectLogs          bool                `json:"collect_logs"`
+	ID                   string              `json:"id"`
+	Name                 string              `json:"name"`
+	Kind                 string              `json:"kind"`
+	BaseURL              string              `json:"base_url"`
+	UIURL                string              `json:"ui_url,omitempty"`
+	Group                string              `json:"group,omitempty"`
+	Enabled              bool                `json:"enabled"`
+	IntervalSeconds      int                 `json:"interval_seconds"`
+	TimeoutSeconds       int                 `json:"timeout_seconds"`
+	FailureThreshold     int                 `json:"failure_threshold"`
+	RecoveryThreshold    int                 `json:"recovery_threshold"`
+	AllowPrivate         bool                `json:"allow_private"`
+	Generation           int64               `json:"generation"`
+	CreatedAt            time.Time           `json:"created_at"`
+	UpdatedAt            time.Time           `json:"updated_at"`
+	Tombstone            bool                `json:"tombstone"`
+	TokenCiphertext      string              `json:"-"`
+	CredentialConfigured bool                `json:"credential_configured"`
+	Current              *Check              `json:"current,omitempty"`
+	LastSuccess          *Check              `json:"last_success,omitempty"`
+	LastCheckAt          *time.Time          `json:"last_check_at,omitempty"`
+	LastSuccessAt        *time.Time          `json:"last_success_at,omitempty"`
+	FailureCount         int                 `json:"failure_count"`
+	RecoveryCount        int                 `json:"recovery_count"`
+	OpenIncident         bool                `json:"open_incident"`
+	OpenRestriction      bool                `json:"open_restriction"`
+	Status               string              `json:"status"`
+	FreshnessState       string              `json:"freshness"`
+	EvidenceLevel        string              `json:"evidence_level"`
+	InferenceState       string              `json:"inference_state"`
+	UpdateState          string              `json:"update_state"`
 }
 
 type Check struct {
+	Details        *Details  `json:"details,omitempty"`
 	ID             string    `json:"id"`
 	Cursor         string    `json:"cursor"`
 	ServiceID      string    `json:"service_id"`
@@ -86,7 +96,7 @@ type Check struct {
 	QueuedAt       time.Time `json:"queued_at"`
 	StartedAt      time.Time `json:"started_at,omitempty"`
 	CompletedAt    time.Time `json:"completed_at,omitempty"`
-	DurationMS     int64     `json:"duration_ms,omitempty"`
+	DurationMS     int64     `json:"duration_ms"`
 	Class          string    `json:"class,omitempty"`
 	Message        string    `json:"message,omitempty"`
 	Success        bool      `json:"success"`

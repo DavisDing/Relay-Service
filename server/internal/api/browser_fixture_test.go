@@ -34,7 +34,7 @@ func TestBrowserFixture(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		c := monitor.Check{ID: fmt.Sprint(i + 1), ServiceID: s.ID, Cursor: fmt.Sprintf("%020d", i+1), Generation: s.Generation, Status: status, CompletedAt: now, StartedAt: now.Add(-80 * time.Millisecond), DurationMS: 80, Message: "Fixture observation"}
+		c := monitor.Check{ID: fmt.Sprint(i + 1), ServiceID: s.ID, Cursor: fmt.Sprintf("%020d", i+1), Generation: s.Generation, Status: status, CompletedAt: now, StartedAt: now.Add(-80 * time.Millisecond), DurationMS: 80, Class: "network_error", Message: "Health endpoint could not be reached"}
 		if err := f.store.Update(ctx, func(tx storage.Tx) error {
 			if err := tx.Put("monitor.state", s.ID, map[string]any{"current": c, "last_check_at": now}); err != nil {
 				return err
@@ -65,6 +65,39 @@ func TestBrowserFixture(t *testing.T) {
 	var servicesStatus, alertsStatus atomic.Int32
 	handler := New(f.store, f.access, f.monitor, Options{AllowedOrigin: "http://" + address, Version: "browser-fixture"})
 	wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Synthetic, read-only upstreams for the service editor preview. No NAS or
+		// provider credentials are used. Available only inside this opt-in fixture.
+		if r.Method == http.MethodGet {
+			switch r.URL.Path {
+			case "/providers/proxies":
+				writeJSON(w, 200, map[string]any{"providers": map[string]any{
+					"示例订阅":  map[string]any{"proxies": []map[string]any{{"name": "香港示例", "type": "ss", "alive": true, "history": []map[string]any{{"time": time.Now().UTC(), "delay": 35}}}}, "subscriptionInfo": map[string]any{"Upload": 1073741824, "Download": 2147483648, "Total": 107374182400, "Expire": now.Add(30 * 24 * time.Hour).Unix()}},
+					"无流量信息": map[string]any{},
+				}})
+				return
+			case "/proxies":
+				writeJSON(w, 200, map[string]any{"proxies": map[string]any{}})
+				return
+			case "/health/liveliness":
+				writeJSON(w, 200, "I'm alive!")
+				return
+			case "/model/info":
+				writeJSON(w, 200, map[string]any{"data": []map[string]any{{"model_name": "example-model-a", "model_info": map[string]string{"id": "fixture-deployment"}, "litellm_params": map[string]string{"model": "openai/example-model-a", "api_base": "https://upstream.invalid"}}}})
+				return
+			case "/spend/logs/v2":
+				writeJSON(w, 200, map[string]any{"data": []map[string]any{{"request_id": "synthetic", "model": "example-model-a", "model_group": "example-model-a", "model_id": "fixture-deployment", "startTime": time.Now().UTC().Add(-time.Minute), "endTime": time.Now().UTC().Add(-time.Second), "status": "failure"}}, "total": 1, "page": 1, "page_size": 100, "total_pages": 1})
+				return
+			case "/api/uptime/status":
+				writeJSON(w, 200, map[string]any{"success": true, "data": []map[string]any{{"categoryName": "示例模型", "monitors": []map[string]any{{"name": "示例模型 A", "status": 1, "uptime": 0.99, "heartbeats": []int{1, 1, 0, 1}}, {"name": "示例模型 B", "status": 0, "uptime": 0.9, "heartbeats": []int{1, 0, 0}}}}}})
+				return
+			case "/v1/models":
+				writeJSON(w, 200, map[string]any{"data": []map[string]string{{"id": "example-model-a"}, {"id": "example-model-b"}}})
+				return
+			case "/api/v2/summary.json":
+				writeJSON(w, 200, map[string]any{"components": []map[string]string{{"name": "模型 A API", "status": "operational"}, {"name": "模型 B API", "status": "degraded_performance"}}})
+				return
+			}
+		}
 		if r.URL.Path == "/__fixture/faults" && r.Method == "POST" {
 			switch r.URL.Query().Get("target") {
 			case "services":

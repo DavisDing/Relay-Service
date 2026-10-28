@@ -1,6 +1,6 @@
 import type { Alert, Service } from './types';
 import { Button } from './ui';
-import { severity, time } from './presentation';
+import { message, severity, time } from './presentation';
 
 type Props = {
   alerts: Alert[]; services: Service[]; ackCursor: number; busy: boolean; admin: boolean;
@@ -32,7 +32,7 @@ export function AlertsPanel({ alerts, services, ackCursor, busy, admin, skippedU
               {alerts.map(alert => (
                 <tr key={alert.id}>
                   <td>{services.find(service => service.id === alert.service_id)?.name || alert.service_id}<small>{alert.kind}</small></td>
-                  <td><span className={'alert-severity ' + (alert.severity || 'unknown')}>{severity(alert.severity)}</span> {alert.message}
+                  <td><span className={'alert-severity ' + (alert.severity || 'unknown')}>{severity(alert.severity)}</span> {message(alert.message)}
                     {alert.count > 0 && <small>第 {alert.count} 次失败触发</small>}
                     {alert.incident_id && <small>故障组 {alert.incident_id.slice(0, 8)}</small>}
                     {alert.check_id && <small>检查 {alert.check_id.slice(0, 8)}</small>}

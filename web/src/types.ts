@@ -1,5 +1,28 @@
+export type GatewayDetails = {
+  catalog_state:string; deployments_state:string; logs_state:string;
+  models?:{id:string}[];
+  deployments?:{id?:string;model:string;upstream_model?:string;provider?:string;channel?:string}[];
+  traffic?:{model:string;deployment_id?:string;channel?:string;success:number;failure:number;unknown:number;cache_hits:number;last_at:string}[];
+  issues?:{source:string;class:string}[];model_count:number;deployment_count:number;
+  window_start:string;window_end:string;latest_at?:string;rows:number;total:number;skipped:number;sampled:boolean;truncated:boolean;
+};
+export type PublicStatusConfig = {
+  format?: string; resource_path?: string; items_path?: string; name_field?: string; status_field?: string;
+  healthy_values?: string[]; unhealthy_values?: string[];
+  html_item_tag?: string; html_item_attribute?: string; html_item_value?: string;
+  html_name_attribute?: string; html_status_attribute?: string;
+};
 export type Principal = { id: string; role: string; must_change_password?: boolean };
 export type Check = {
+  details?: {
+    source: string; count: number; truncated: boolean;
+    public_status?: { source: string; count: number; truncated: boolean; observed_at: string; updated_at?: string; unknown: boolean; unhealthy: boolean; components: {name: string;status: string;source_status?:string;category?:string;group?:string;uptime?:number;heartbeats?:string[];updated_at?:string}[] };
+    mihomo?: { subscriptions: {name:string;info?:{upload:number;download:number;total:number;expire:number};upload_bytes?:number;download_bytes?:number;total_bytes?:number;expire_seconds?:number;used_bytes?:number;remaining_bytes?:number;usage_state:string;updated_at?:string}[]; nodes:{provider?:string;name:string;type:string;state:string;alive?:boolean;delay_ms?:number;checked_at?:string;freshness:string}[];subscription_count:number;node_count:number;healthy_nodes:number;unhealthy_nodes:number;unknown_nodes:number;stale_nodes:number;truncated:boolean;proxy_source_state:string };
+    gateway?: GatewayDetails;
+    subscriptions?: { name: string; info?: { upload: number; download: number; total: number; expire: number } }[];
+    models?: { id: string; status: string }[];
+    components?: { name: string; status: string }[];
+  };
   id: string;
   cursor: string;
   status: string;
@@ -10,6 +33,7 @@ export type Check = {
   duration_ms?: number;
 };
 export type Service = {
+  public_status?: PublicStatusConfig; collect_models?: boolean; collect_logs?: boolean;
   id: string;
   name: string;
   kind: string;
@@ -69,6 +93,7 @@ export type AlertPage = {
   has_more: boolean;
 };
 export type Form = {
+  public_status?: PublicStatusConfig; collect_models?: boolean; collect_logs?: boolean;
   id: string;
   name: string;
   kind: string;

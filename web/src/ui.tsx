@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import { solarTheme, validLocation } from './solar';
+import type { Location } from './solar';
 import type { ButtonHTMLAttributes, MouseEvent, ReactNode } from 'react';
 
 const paths = {
@@ -64,8 +66,9 @@ export function Button({ loading = false, disabled, children, onClick, ...props 
   );
 }
 
-type Theme = 'system' | 'light' | 'dark';
+type Theme = 'auto' | 'system' | 'light' | 'dark';
 const themeOptions: { value: Theme; label: string; icon: IconName }[] = [
+  { value: 'auto', label: '跟随日出日落', icon: 'refresh' },
   { value: 'light', label: '浅色', icon: 'sun' },
   { value: 'dark', label: '深色', icon: 'moon' },
   { value: 'system', label: '跟随系统', icon: 'system' },
@@ -74,13 +77,40 @@ export function ThemeControl() {
   const [theme, setTheme] = useState<Theme>(() => {
     try {
       const saved = localStorage.getItem('relay-theme');
-      return saved === 'light' || saved === 'dark' ? saved : 'system';
-    } catch { return 'system'; }
+      return saved === 'light' || saved === 'dark' || saved === 'system' ? saved : 'auto';
+    } catch { return 'auto'; }
   });
+  const [location, setLocation] = useState<Location | null>(() => {
+    try { const value = JSON.parse(localStorage.getItem('relay-solar-location') || 'null'); return validLocation(value) ? value : null; }
+    catch { return null; }
+  });
+  const [locating, setLocating] = useState(false);
+  const [locationError, setLocationError] = useState('');
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  function locate() {
+    if (!navigator.geolocation) { setLocationError('此浏览器无法定位，暂时跟随系统。请使用 HTTPS 或手动选择外观。'); return; }
+    setLocating(true);
+    setLocationError('');
+    navigator.geolocation.getCurrentPosition(position => {
+      if (!mounted.current) return;
+      const next = { latitude: position.coords.latitude, longitude: position.coords.longitude };
+      if (validLocation(next)) {
+        setLocation(next);
+        try { localStorage.setItem('relay-solar-location', JSON.stringify(next)); } catch { /* memory-only */ }
+      } else setLocationError('定位结果无效，暂时跟随系统。');
+      setLocating(false);
+    }, () => {
+      if (!mounted.current) return;
+      setLocating(false);
+      setLocationError('无法获得位置，请允许定位并使用 HTTPS；未定位时暂时跟随系统。');
+    }, { enableHighAccuracy: false, timeout: 10000, maximumAge: 3600000 });
+  }
   useEffect(() => {
     const query = matchMedia('(prefers-color-scheme: dark)');
     function apply() {
-      const resolved = theme === 'system' ? (query.matches ? 'dark' : 'light') : theme;
+      const resolved = theme === 'auto' && location ? solarTheme(new Date(), location)
+        : theme === 'system' || theme === 'auto' ? (query.matches ? 'dark' : 'light') : theme;
       document.documentElement.dataset.theme = resolved;
       const background = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
       document.querySelector('meta[name="theme-color"]')?.setAttribute('content', background);
@@ -89,17 +119,31 @@ export function ThemeControl() {
     query.addEventListener('change', apply);
     try { localStorage.setItem('relay-theme', theme); }
     catch { /* Appearance remains available without storage. */ }
-    return () => query.removeEventListener('change', apply);
-  }, [theme]);
+    const timer = window.setInterval(apply, 30000);
+    window.addEventListener('focus', apply);
+    document.addEventListener('visibilitychange', apply);
+    return () => {
+      clearInterval(timer);
+      query.removeEventListener('change', apply);
+      window.removeEventListener('focus', apply);
+      document.removeEventListener('visibilitychange', apply);
+    };
+  }, [theme, location]);
   return (
-    <div className="theme-control" role="group" aria-label="界面外观">
+    <div className="theme-settings"><div className="theme-control" role="group" aria-label="界面外观">
       {themeOptions.map(option => (
         <Button type="button" className="icon-button" key={option.value}
           aria-label={option.label} title={option.label} aria-pressed={theme === option.value}
-          onClick={() => setTheme(option.value)}>
+          onClick={() => { setTheme(option.value); if (option.value === 'auto' && !location) locate(); }}>
           <Icon name={option.icon} />
         </Button>
       ))}
+    </div>
+    {theme === 'auto' && <>
+      <p>{location ? '按已保存位置的日出日落自动切换，每 30 秒校准。' : '日出日落需要定位，未定位时暂时跟随系统。'}位置仅保存在此浏览器。</p>
+      <Button type="button" className="text" loading={locating} onClick={locate}>{location ? '更新位置' : '允许定位'}</Button>
+      {locationError && <p role="status">{locationError}</p>}
+    </>}
     </div>
   );
 }

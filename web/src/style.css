@@ -668,7 +668,7 @@ footer {
 }
 
 .dialog.wide {
-  width: min(960px,100%);
+  width: 100%;
 }
 
 .dialog .section-head {
@@ -1076,3 +1076,21 @@ fieldset {
   .service-symbol { display: none; }
   .service-expanded { padding: 14px 16px 18px; }
 }
+
+/* Keep native select metrics aligned with text fields across browsers. */
+.form-grid input,.form-grid select { height: 48px; min-height: 48px; box-sizing: border-box; font: inherit; font-size: 16px; }
+.form-grid select { appearance: none; padding-right: 38px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='m4 6 4 4 4-4' fill='none' stroke='%23888' stroke-width='1.5'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; }
+.modal.history-modal { width: min(1000px,calc(100% - 32px)); }
+.history-table { min-width: 700px; }
+.history-table th { text-align: center; white-space: nowrap; }
+.history-table th:nth-child(-n+3),.history-table td:nth-child(-n+3) { text-align: center; white-space: nowrap; width: 1%; }
+.history-table td:last-child { min-width: 220px; overflow-wrap: anywhere; }
+.connection-result { padding: 12px 14px; border: 1px solid var(--line-soft); border-radius: 12px; margin: 12px 0; }
+.connection-result p { margin: 8px 0 0; }
+.theme-settings { max-width: 320px; }
+.theme-settings p { font-size: 12px; color: var(--text-secondary); margin: 8px 0; }
+.monitor-details { margin: 12px 0; overflow-wrap: anywhere; }
+.monitor-details ul { padding-left: 20px; }
+
+.monitor-details li { margin: 8px 0; }
+.monitor-details li small { display: block; color: var(--text-secondary); margin-top: 4px; }

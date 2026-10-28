@@ -16,6 +16,7 @@ import (
 )
 
 type observation struct {
+	details                *Details
 	success                bool
 	status, class, message string
 }
@@ -77,6 +78,12 @@ func safeDial(ctx context.Context, network, address string, allowPrivate bool) (
 }
 func endpoint(kind string) string {
 	switch kind {
+	case KindMihomo:
+		return "/providers/proxies"
+	case KindOpenAI:
+		return "/v1/models"
+	case KindStatuspage:
+		return "/api/v2/summary.json"
 	case KindLiteLLM:
 		return "/health/liveliness"
 	case KindHermes, KindWorkbuddy2API, KindOpenWebUI:
@@ -89,11 +96,11 @@ func endpoint(kind string) string {
 		return "/"
 	}
 }
-func (e *Engine) execute(ctx context.Context, rec serviceRecord) observation {
+func (e *Engine) executeBasic(ctx context.Context, rec serviceRecord) observation {
 	s := rec.Service
 	u, err := validatedURL(s.BaseURL)
 	if err != nil {
-		return failure(StatusUnsupported, "configuration_invalid", "Connection origin is invalid")
+		return failure(StatusUnsupported, "configuration_invalid", "服务地址无效，请仅填写协议、主机和端口。")
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(s.TimeoutSeconds)*time.Second)
 	defer cancel()
@@ -111,7 +118,7 @@ func (e *Engine) execute(ctx context.Context, rec serviceRecord) observation {
 			return networkFailure(ctx, err)
 		}
 		conn.Close()
-		return positive("connectivity_only", "TCP connection succeeded; application readiness and inference are untested")
+		return positive("connectivity_only", "TCP 连接成功；应用就绪状态和推理能力未测试。")
 	}
 	u.Path = endpoint(s.Kind)
 	u.RawPath = ""
@@ -124,13 +131,14 @@ func (e *Engine) execute(ctx context.Context, rec serviceRecord) observation {
 	client := &http.Client{Transport: transport, Timeout: time.Duration(s.TimeoutSeconds) * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return failure(StatusUnsupported, "configuration_invalid", "Connection origin is invalid")
+		return failure(StatusUnsupported, "configuration_invalid", "服务地址无效，请仅填写协议、主机和端口。")
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "Relay-Service/monitor-v1")
+	credential := ""
 	if rec.Cipher != "" {
 		if e.crypt == nil {
-			return failure(StatusUnauthorized, "credential_unavailable", "Monitoring credential is unavailable")
+			return failure(StatusUnauthorized, "credential_unavailable", "检查凭据不可用，请重新配置。")
 		}
 		var token string
 		var err error
@@ -142,11 +150,12 @@ func (e *Engine) execute(ctx context.Context, rec serviceRecord) observation {
 			token, err = e.crypt.Decrypt(rec.Cipher)
 		}
 		if err != nil {
-			return failure(StatusUnauthorized, "credential_unavailable", "Monitoring credential could not be decrypted")
+			return failure(StatusUnauthorized, "credential_unavailable", "检查凭据无法解密，请重新配置。")
 		}
 		if strings.ContainsAny(token, "\r\n") {
-			return failure(StatusUnauthorized, "credential_invalid", "Monitoring credential is invalid")
+			return failure(StatusUnauthorized, "credential_invalid", "检查凭据格式无效，请重新配置。")
 		}
+		credential = token
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	resp, err := client.Do(req)
@@ -156,49 +165,60 @@ func (e *Engine) execute(ctx context.Context, rec serviceRecord) observation {
 	defer resp.Body.Close()
 	switch {
 	case resp.StatusCode == 401 || resp.StatusCode == 403:
-		return failure(StatusUnauthorized, "authentication_failed", "Monitoring credential was rejected")
+		return failure(StatusUnauthorized, "authentication_failed", "检查凭据被拒绝，请核对凭据和权限。")
 	case resp.StatusCode >= 300 && resp.StatusCode <= 399:
-		return failure(StatusUnsupported, "redirect_rejected", "Health endpoint redirected; target and authentication need verification")
+		return failure(StatusUnsupported, "redirect_rejected", "检查接口发生重定向，请核对地址和认证方式。")
 	case resp.StatusCode == 404 || resp.StatusCode == 405:
-		return failure(StatusUnsupported, "endpoint_unsupported", "Health endpoint is not supported by this installation")
+		return failure(StatusUnsupported, "endpoint_unsupported", "当前服务未提供此检查接口，请核对服务类型与版本。")
 	case resp.StatusCode == 429:
-		return failure(StatusUnhealthy, "rate_limited", "Health endpoint rate limited the check")
+		return failure(StatusUnhealthy, "rate_limited", "检查被服务限流，请稍后重试。")
 	case resp.StatusCode < 200 || resp.StatusCode >= 300:
-		return failure(StatusUnhealthy, "http_error", "Health endpoint returned an unsuccessful status")
+		return failure(StatusUnhealthy, "http_error", "检查接口返回错误状态，请检查上游服务。")
 	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, 65537))
+	limit := int64(65536)
+	if s.Kind == KindMihomo || s.Kind == KindOpenAI || s.Kind == KindStatuspage {
+		limit = 1 << 20
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
-		return failure(StatusUnhealthy, "response_incomplete", "Health response was incomplete")
+		return failure(StatusUnhealthy, "response_incomplete", "检查响应不完整，请重试。")
 	}
-	if len(b) > 65536 {
-		return failure(StatusUnsupported, "response_too_large", "Health response exceeded the size limit")
+	if int64(len(b)) > limit {
+		return failure(StatusUnsupported, "response_too_large", "检查响应超过大小限制。")
 	}
 	contentType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	trim := strings.TrimSpace(string(b))
 	if contentType == "text/html" || strings.HasPrefix(strings.ToLower(trim), "<!doctype html") || strings.HasPrefix(strings.ToLower(trim), "<html") {
-		return failure(StatusUnsupported, "unexpected_html", "Health endpoint returned HTML rather than a health response")
+		return failure(StatusUnsupported, "unexpected_html", "检查接口返回了网页，请核对服务类型和 API 地址。")
+	}
+	if s.Kind == KindMihomo || s.Kind == KindOpenAI || s.Kind == KindStatuspage {
+		result := detailObservation(s.Kind, b, e.now())
+		if reflectedCredential(result.details, credential) {
+			return failure(StatusUnsupported, "invalid_response", "监控响应包含凭据，已拒绝展示。")
+		}
+		return result
 	}
 	if s.Kind == KindHTTP {
-		return positive("connectivity_only", "HTTP origin responded successfully; application readiness and inference are untested")
+		return positive("connectivity_only", "HTTP 地址响应成功；应用就绪状态和推理能力未测试。")
 	}
 	// LiteLLM liveliness is a JSON string, not the model-invoking /health API.
 	// Accept only its documented process response, never arbitrary 2xx text.
 	if s.Kind == KindLiteLLM {
 		var text string
 		if json.Unmarshal(b, &text) == nil && text == "I\u0027m alive!" {
-			return positive("process", "Liveliness endpoint responded; gateway readiness and inference are untested")
+			return positive("process", "进程存活接口响应成功；网关就绪状态和推理能力未测试。")
 		}
 	}
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(b, &obj); err != nil || obj == nil {
-		return failure(StatusUnsupported, "invalid_response", "Health endpoint did not return a supported JSON object")
+		return failure(StatusUnsupported, "invalid_response", "检查接口未返回支持的 JSON 对象。")
 	}
 	if s.Kind == KindOllama {
 		var v string
 		if json.Unmarshal(obj["version"], &v) != nil || strings.TrimSpace(v) == "" || len(v) > 128 {
-			return failure(StatusUnsupported, "invalid_response", "Version endpoint did not return the expected schema")
+			return failure(StatusUnsupported, "invalid_response", "版本接口返回的数据格式不符合预期。")
 		}
-		return positive("process", "Version endpoint responded; models and inference are untested")
+		return positive("process", "版本接口响应成功；模型和推理能力未测试。")
 	}
 	for _, key := range []string{"status", "healthy", "ok"} {
 		raw, ok := obj[key]
@@ -208,39 +228,39 @@ func (e *Engine) execute(ctx context.Context, rec serviceRecord) observation {
 		var boolean bool
 		if json.Unmarshal(raw, &boolean) == nil {
 			if boolean {
-				return positive("process", "Process health endpoint reported success; inference is untested")
+				return positive("process", "进程健康检查成功；推理能力未测试。")
 			}
-			return failure(StatusUnhealthy, "health_failed", "Health endpoint reported failure")
+			return failure(StatusUnhealthy, "health_failed", "服务健康接口报告失败。")
 		}
 		var v string
 		if json.Unmarshal(raw, &v) == nil {
 			switch strings.ToLower(v) {
 			case "ok", "healthy", "alive", "up", "ready", "success", "running":
-				return positive("process", "Process health endpoint reported success; inference is untested")
+				return positive("process", "进程健康检查成功；推理能力未测试。")
 			case "error", "failed", "failure", "unhealthy", "down", "not_ready":
-				return failure(StatusUnhealthy, "health_failed", "Health endpoint reported failure")
+				return failure(StatusUnhealthy, "health_failed", "服务健康接口报告失败。")
 			}
 		}
 	}
-	return failure(StatusUnsupported, "unverified_response", "Health response semantics require installation-specific verification")
+	return failure(StatusUnsupported, "unverified_response", "无法判断当前安装的检查响应，请核对接口合同。")
 }
 func networkFailure(ctx context.Context, err error) observation {
 	if ctx.Err() != nil {
-		return failure(StatusUnhealthy, "timeout", "Health check timed out or was cancelled")
+		return failure(StatusUnhealthy, "timeout", "检查超时或已取消，请检查网络和超时设置。")
 	}
 	if strings.Contains(err.Error(), "destination is not permitted") {
-		return failure(StatusUnsupported, "target_blocked", "Destination requires private-network consent or is a blocked metadata address")
+		return failure(StatusUnsupported, "target_blocked", "目标需要私网授权，或属于禁止访问的元数据地址。")
 	}
 	var op *net.OpError
 	if errors.As(err, &op) {
 		if op.Timeout() {
-			return failure(StatusUnhealthy, "timeout", "Health check timed out")
+			return failure(StatusUnhealthy, "timeout", "检查超时，请检查网络和超时设置。")
 		}
-		return failure(StatusUnhealthy, "network_error", "Health endpoint could not be reached")
+		return failure(StatusUnhealthy, "network_error", "无法连接检查接口，请检查地址、DNS 和网络。")
 	}
 	var uerr *url.Error
 	if errors.As(err, &uerr) && uerr.Timeout() {
-		return failure(StatusUnhealthy, "timeout", "Health check timed out")
+		return failure(StatusUnhealthy, "timeout", "检查超时，请检查网络和超时设置。")
 	}
-	return failure(StatusUnhealthy, "network_error", "Health endpoint could not be reached")
+	return failure(StatusUnhealthy, "network_error", "无法连接检查接口，请检查地址、DNS 和网络。")
 }

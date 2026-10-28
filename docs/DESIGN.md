@@ -278,6 +278,8 @@ D-04 仍需限定正文范围；D-10 已接受默认边界/目标，但需 T-07 
 
 ### 5.2 统一服务管理与运维工作区（需求 D-12/FR-W02 已确认；页面和接口方案 PROPOSED）
 
+2026-10-28 已实现补充：日出日落在浏览器按授权定位的坐标计算（NOAA 太阳高度近似），30秒及恢复聚焦重新判定，极昼/极夜自然处理；坐标仅本机保存，不传 Relay API。默认自动；已有手动/系统偏好保留，未定位/失败时提示并跟随系统。表单预览通过管理员 `POST /services/test` 复用检查器、10秒上限和单个并发槽，零持久化；原凭据绑定已有 origin 和 generation。新增 `mihomo`、`openai`、`statuspage` 固定只读适配，把订阅/目录/服务商组件状态作为检查 `details` 投影保存，避免保留整个 provider/模型/状态页响应；1MiB响应、200项投影、缺失明确未知，现有快照、历史、阈值告警及保留机制复用。具体合同见 COMPATIBILITY.md 与 contracts/IMPLEMENTATION.md，真实安装验收另记。
+
 这是 NAS Relay Web 内的统一管理/运维工作区，不替代各项目自己的控制台。它不只是只读仪表盘：管理员可配置 Relay 自身的服务接入项、名称、分组、内网地址、外部 UI URL、只读检查项目与间隔，并管理 Relay 自身的单管理员账号、设备、计划、策略与告警；这些均是 Relay 范围内的管理写操作。D-14 已取消调用 Key 生成/分发/管理必需交付；原 LiteLLM 模型/路由管理按 FR-M02 的数据库/权限/核对和高风险确认边界独立实施，不作为服务监控前提；D-12 本身不新增对 Hermes、workbuddy2api、Open WebUI、Ollama、MetaCubeXD 的写管理能力，也不授权容器操作。凭据以服务端秘密引用存储，输入后不回显；普通 Web/Mac 响应、日志和诊断导出不暴露原值。打开原 Web UI 使用新标签，不保存其网页登录态、不使用 iframe。
 
 | 服务 | 可纳入的低副作用内容 | 推荐的健康分层与边界 |
@@ -875,3 +877,6 @@ FR-A03/AC-55 由 `collector/alerts` 和 Web 账户详情实现，FR-O04/AC-56 �
 - 标准库：[net/http](https://pkg.go.dev/net/http)、[context](https://pkg.go.dev/context)、[embed](https://pkg.go.dev/embed)、[竞态检测](https://go.dev/doc/articles/race_detector)。用于 HTTP 生命周期、取消、静态资源打包与并发验证设计；尚未编译或运行本项目。
 - 数据访问/迁移候选：[pgxpool](https://pkg.go.dev/github.com/jackc/pgx/v5/pgxpool)、[golang-migrate](https://github.com/golang-migrate/migrate)。用于连接池、事务和版本化 SQL 迁移；具体版本、许可证、迁移锁与 NAS 兼容仍需验证。
 - 安全候选：[Argon2id](https://pkg.go.dev/golang.org/x/crypto/argon2)、[AES-GCM/AEAD](https://pkg.go.dev/crypto/cipher)。用于维持原密码/秘密保护要求；标准库/维护者文档不代表项目已通过安全验证。
+
+
+2026-10-28 已实现监控补充：公开状态页增加Pipio站方探针、自定义JSON字段和静态HTML显式规则；mihomo采集剩余额度和已有节点质量，未主动测速；LiteLLM支持按开关读取模型/部署目录及最近24小时有限日志样本。数据经受限同源GET采集器投影并复用当前检查/历史机制，状态、权限、采样与源时间限制分别展示。不是完整增量账本，也没有实现FR-P01～P06的付费探针调度/预算/能力质量测试。来源与边界见对应nas/*-SOURCES-2026-10-28.md及COMPATIBILITY。

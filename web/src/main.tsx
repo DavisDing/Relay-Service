@@ -38,6 +38,9 @@ const pageTitles: Record<string, string> = {
 function toInput(service: Service): Form {
   return {
     id: service.id,
+    public_status: service.public_status,
+    collect_models: service.collect_models,
+    collect_logs: service.collect_logs,
     name: service.name,
     kind: service.kind,
     base_url: service.base_url,
@@ -279,6 +282,16 @@ function App() {
     if (succeeded) setForm(null);
   }
 
+  async function testConnection(input: Form): Promise<Check | null> {
+    let check: Check | null = null;
+    const succeeded = await action(async ensureCurrent => {
+      const response = await api<Check>('/services/test', 'POST', { ...input, name: input.name.trim() || '连通测试' });
+      ensureCurrent();
+      check = response.data;
+    }, false);
+    return succeeded ? check : null;
+  }
+
   async function toggle(service: Service) {
     await action(async ensureCurrent => {
       await api('/services/' + service.id, 'PUT', { ...toInput(service), enabled: !service.enabled });
@@ -515,7 +528,7 @@ function App() {
         <footer>Relay 基础监控 · 数据来源与检查层级独立显示 · 容器操作请在 UGOS 中进行</footer>
       </main>
 
-      {form && <ServiceEditor form={form} setForm={setForm} busy={busy} error={error} save={save} confirming={!!confirmation}
+      {form && <ServiceEditor testConnection={testConnection} form={form} setForm={setForm} busy={busy} error={error} save={save} confirming={!!confirmation}
         onRemove={() => {
           const service = form;
           setError('');

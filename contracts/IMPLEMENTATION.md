@@ -17,7 +17,7 @@
 错误响应：
 
 ```json
-{"error":{"code":"conflict","message":"Resource state changed; refresh and try again"}}
+{"error":{"code":"conflict","message":"配置已变更，请刷新后重试。"}}
 ```
 
 `data_version` 是自有库业务写事务提交后的单调版本；不因纯GET/空事务递增。响应读取和版本查询尚不共用同一数据库快照，不能将其作为跨接口一致快照、ETag或“无需再取数据”的缓存保证；客户端应按接口正常刷新。`schema_version` 与 `api_version` 是合同版本，非数据版本。时间均使用RFC3339 UTC，游标与ID不依赖本地时区。
@@ -36,6 +36,7 @@
 | DELETE `/api/v1/devices/{id}` | 管理员 | 撤销设备，新请求立即拒绝 |
 | GET `/api/v1/services` | 管理员/设备 | 服务与当前观测；设备投影省略base_url/凭据和可写配置 |
 | POST `/api/v1/services` | 管理员 | 新增ServiceInput |
+| POST `/api/v1/services/test` | 管理员，Origin/CSRF | ServiceInput；同步临时检查，最多10秒/一个并发；不保存服务/凭据/历史/事件，编辑要求当前generation和凭据origin绑定 |
 | GET `/api/v1/services/{id}` | 管理员/设备 | 服务详情 |
 | PUT `/api/v1/services/{id}` | 管理员 | 完整ServiceInput，要求当前generation，成功递增 |
 | DELETE `/api/v1/services/{id}?generation=N` | 管理员 | 软移除接入，历史保留 |
@@ -50,11 +51,11 @@
 | POST `/api/v1/retention/preview` | 管理员 | `{history_days,audit_days,generation}`；0..3650天，返回计数、截止时间、五分钟有效的单次预览ID；不删除数据 |
 | PUT `/api/v1/retention` | 管理员 | `{preview_id}`；核对代际/有效期，保存预览中的策略并审计，随后周期分批清理 |
 
-服务输入字段：`id? name kind base_url ui_url? group? enabled interval_seconds timeout_seconds failure_threshold recovery_threshold allow_private token? clear_token? generation`。新建generation=0，更新必须使用读到的当前值。kind为 `litellm/hermes/workbuddy2api/openwebui/ollama/metacubexd/http/tcp`。基础地址只能是HTTP(S) origin，TCP kind也从该origin解析主机/端口；没有可配置的HTTP方法/路径/请求体。参数范围和证据见COMPATIBILITY。`token`为空保留已有秘密，`clear_token=true`显式清除，不允许同时提供新秘密；秘密从不响应回显；目标地址改变时需重新提供或显式清除原凭据。
+服务输入字段：`id? name kind base_url ui_url? group? enabled interval_seconds timeout_seconds failure_threshold recovery_threshold allow_private token? clear_token? generation public_status? collect_models? collect_logs?`。新建generation=0，更新必须使用读到的当前值。kind为 `litellm/hermes/workbuddy2api/openwebui/ollama/metacubexd/mihomo/openai/statuspage/http/tcp`。基础地址只能是HTTP(S) origin，TCP kind也从该origin解析主机/端口；不允许配置HTTP方法/请求体；公开状态页可在独立配置中指定受限相对GET路径。参数范围和证据见COMPATIBILITY。`token`为空保留已有秘密，`clear_token=true`显式清除，不允许同时提供新秘密；秘密从不响应回显；目标地址改变时需重新提供或显式清除原凭据。
 
 Cookie写操作校验origin（默认匹配请求Host/协议，或显式固定origin）与双提交 `relay_csrf` Cookie/`X-Relay-CSRF` header。bootstrap/login在未有会话时仅校验origin；Cookie会话采用HttpOnly、SameSite=Strict和匹配部署HTTPS的Secure标志。纯Bearer设备请求不依赖浏览器origin，但不得写管理员资源；设备仅允许读取及更新自己的已读位置。服务端不信任客户端forwarded host/proto来推导允许origin。
 
-JSON请求最大64KiB，未知字段/多JSON/非对象拒绝。常见错误为400输入、401无效或过期凭据、403权限/CSRF/origin、404不存在、409generation/暂停冲突、413过大、415媒体类型、429认证尝试限制、503请求截止、500内部错误。登录连续8次失败锁5分钟；配对失败也有限制。错误文本不输出数据库URL/上游响应/秘密。
+JSON请求最大64KiB，未知字段/多JSON/非对象拒绝。常见错误为400输入、401无效或过期凭据、403权限/CSRF/origin、404不存在、409generation/暂停冲突、413过大、415媒体类型、429认证尝试限制、503请求截止、500内部错误。登录连续8次失败锁5分钟；配对失败也有限制。错误文本不输出数据库URL/上游响应/秘密。API与监控原因使用中文，客户端按稳定code做本地化和安全兜底，不把任意上游/网络原文回显给用户。
 
 认证限流的429响应带`Retry-After: 300`；这不代表已实现上游HTTP限流后的调度退避。配对码为8随机字节的Base32无填充编码（13字符，64 bit），兼容仍有效的旧码。设备名拒绝非法UTF-8、控制字符及双向控制符；签发、成功配对、撤销与脱敏审计在同一事务提交，审计不包含码、令牌或秘密。
 
@@ -63,6 +64,8 @@ JSON请求最大64KiB，未知字段/多JSON/非对象拒绝。常见错误为40
 每服务当前结果、最近成功和最近检查时间分开。严格超过两倍检查间隔为stale，当前状态unknown；恰好两倍仍为fresh。例如间隔86400秒时超过48小时才过期；此规则已经在DESIGN 3.4定义，不等于失败检测SLA。缺失、暂停、认证失败、不支持和中断各自保留原因。所有服务推理状态为not_tested，镜像更新状态不可得；基础成功不能代替模型/数据库/容器健康。
 
 检查先持久化queued，再由两个全局worker领取running，网络IO不持有数据库事务锁；每服务至多一个进行中，旧generation结果只入历史。关机/重启的running转interrupted，不生成目标故障。手动操作号幂等不等于外部HTTP exactly-once，不承诺断链后无重复GET。
+
+检查可附带 `details={source,count,truncated,subscriptions?,models?,components?}`：mihomo 为 `/providers/proxies` 的名称和 Upload/Download/Total/Expire 投影（统一小写JSON字段，缺少info/零总额/零到期不推断无限或健康）；openai 为 `/v1/models` 的模型ID和 `not_tested`；statuspage 为 `/api/v2/summary.json` 的非分组组件名称及已知状态。响应最大1MiB，持久快照最多200项，超过标记truncated。字段为可选新增，不需要SQL结构迁移；旧记录仍可读取，不改写原历史消息，Web映射已知旧英文消息。所有服务的推理证据仍为not_tested。正常检查不足1ms时duration_ms明确返回0，预览也不省略。
 
 中断记录的duration_ms为StartedAt到中断完成/恢复时刻的非负墙钟耗时，重启恢复会包含停机时间；缺失开始时间或时钟回退时0表示未测得，不能解读为目标零延迟。
 
@@ -78,7 +81,7 @@ JSON请求最大64KiB，未知字段/多JSON/非对象拒绝。常见错误为40
 
 PostgreSQL初版为relay_records JSONB记录与relay_sequences普通计数表；Update共享短advisory writer锁实现跨进程读改写序列化，禁止在事务中做外部网络调用。历史/审计预览使用由JSON派生的retention_at列及普通时间索引，数据库触发器保证INSERT/UPDATE时同步。当前无存量数据，首装基线001/002顺序建表，002直接采用普通时间列索引；不包含旧版002/003兼容、跳过或回填。默认仅RELAY_DATABASE_URL，同一具有public USAGE/CREATE的专用账号读写并初始化/升级；新建表及函数归该账号所有。已移除第二迁移URL及独立迁移账号配置，不保留兼容分支；不修改原对象所有者。启动检查ledger、必要表列和保留策略触发器/索引，缺失或有待执行版本时初始化，关闭初始化池并经运行连接复验后才启动HTTP/调度。完整结构跳过；未知/不连续历史、无账本但已有业务表、账本完整而对象损坏或权限错误均拒绝启动。migrate命令保留作维护入口，SQLite停机迁移也默认复用主连接；初始化与普通进程共享数据库leader互斥。只保护同一数据库，不解决独立克隆库双活。
 
-源码Compose默认使用GHCR latest自行测试渠道，版本发布包锁定digest；发布/容器证据见nas/VALIDATION.md，不以本次本地测试代替新提交的远端CI。真实库/SQL授权/迁移、UGOS、备份恢复和客户端验收未执行。容量限制/磁盘风险告警、上游Retry-After退避、账本/余额/目录、付费探针、模型/路由管理、正文、镜像更新、灾备授权代际和原生客户端仍为后续需求。
+源码Compose默认使用GHCR latest自行测试渠道，版本发布包锁定digest；发布/容器证据见nas/VALIDATION.md，不以本次本地测试代替新提交的远端CI。真实库/SQL授权/迁移、UGOS、备份恢复和客户端验收未执行。容量限制/磁盘风险告警、上游Retry-After退避、账本/余额/完整模型目录整合、付费探针、模型/路由管理、正文、镜像更新、灾备授权代际和原生客户端仍为后续需求。
 
 ## 源码检查与完整 Web 构建
 
@@ -91,3 +94,12 @@ Web 总览驾驶舱的状态分布与计数来自已同步服务，过期/未观
 默认 NAS Compose 仅保留镜像、端口、卷与就绪依赖；PostgreSQL 配套镜像内置初始化脚本，Relay 镜像内置配置路径/健康检查。默认 Compose 网络由项目创建，既有网络和环境覆盖示例仅按需合并。版本部署包绑定两个镜像摘要。
 
 2026-10-28 审计修复：首次改密事务提交后删除临时密码文件，清理失败告警/重启重试，不回滚已提交账号；启动后清空 cfg.InitialPassword 与进程环境值，无法保证 GC 旧副本物理擦除。待改密密码失配/缺失仅告警、保留原账号和受限会话规则，不再阻止 HTTP 启动。部署文件允许白名单键子集，由最终配置验证必需项。未认证登录页不再给出部署凭据获取路径。
+
+
+### 只读监控扩展（2026-10-28）
+
+服务输入/响应可选增加 `public_status`、`collect_models`、`collect_logs`（默认false，旧配置行为保留）。`public_status`仅statuspage支持，字段包括format/resource_path/items_path/name_field/status_field/healthy_values/unhealthy_values和html_item_tag/html_item_attribute/html_item_value/html_name_attribute/html_status_attribute。只允许同源相对路径，不允许查询、fragment或目录跳转。`format=pipio`无路径时默认`/api/uptime/status`；普通默认`/api/v2/summary.json`。公开状态配置拒绝新凭据，读取时忽略历史残留凭据。规则变化增加代际并清除当前状态/计数，不继承旧目标绿色；在途旧代际沿用历史隔离。
+
+`collect_models`仅LiteLLM/workbuddy2api可用；`collect_logs`仅LiteLLM可用。预览复用同一配置，最多10秒、零持久化。采集失败与进程状态独立，`details.gateway`保存各来源状态、模型/部署清单和聚合调用样本，不把它们写成`inference_state=healthy`。`details.mihomo`保存订阅已用/剩余和已有节点质量；`details.public_status`保存服务商组件/站方探针报告、源时间可得性和心跳。新增JSON字段不需要SQL结构迁移，旧明细兼容显示，保留政策沿用检查历史；各类清单最多200项且完整响应内尾项异常仍汇总。
+
+调用样本窗口最近24小时，最多两页×100，使用确切model_id关联渠道部署；状态空/未知单列，缓存不证明上游成功，重复/丢弃/满页边界/部分失败标为不完整。统计不能跨重叠快照相加。Pipio可用率窗口和心跳时间未提供，不标成24小时。mihomo节点历史15分钟内且可判断才计近期正常/异常，空alive默认值不证明在线；0延迟按当前官方实现失败哨兵处理。所有投影统一检查当前凭据反射，错误只返回稳定中文分类，不保存上游原始错误体。

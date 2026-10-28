@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -89,8 +90,22 @@ func validateInput(in *ServiceInput) error {
 		return ErrValidation
 	}
 	switch in.Kind {
-	case KindLiteLLM, KindHermes, KindWorkbuddy2API, KindOpenWebUI, KindOllama, KindMetaCubeXD, KindHTTP, KindTCP:
+	case KindMihomo, KindOpenAI, KindStatuspage, KindLiteLLM, KindHermes, KindWorkbuddy2API, KindOpenWebUI, KindOllama, KindMetaCubeXD, KindHTTP, KindTCP:
 	default:
+		return ErrValidation
+	}
+	if in.PublicStatus != nil {
+		if in.Kind != KindStatuspage || ValidatePublicStatusConfig(in.PublicStatus) != nil || in.Token != "" {
+			return ErrValidation
+		}
+	}
+	if (in.CollectModels || in.CollectLogs) && in.Kind != KindLiteLLM && in.Kind != KindWorkbuddy2API {
+		return ErrValidation
+	}
+	if in.CollectLogs && in.Kind != KindLiteLLM {
+		return ErrValidation
+	}
+	if in.Kind == KindStatuspage && in.Token != "" {
 		return ErrValidation
 	}
 	if _, err := validatedURL(in.BaseURL); err != nil {
@@ -189,7 +204,7 @@ func (e *Engine) Save(ctx context.Context, actor string, in ServiceInput) (Servi
 		if cipher != "" && rec.Service.BaseURL != in.BaseURL && in.Token == "" && !in.ClearToken {
 			return ErrValidation
 		}
-		monitorChanged := in.ID == "" || rec.Service.Kind != in.Kind || rec.Service.BaseURL != in.BaseURL || rec.Service.Enabled != in.Enabled || rec.Service.AllowPrivate != in.AllowPrivate || in.Token != "" || in.ClearToken
+		monitorChanged := !reflect.DeepEqual(rec.Service.PublicStatus, in.PublicStatus) || rec.Service.CollectModels != in.CollectModels || rec.Service.CollectLogs != in.CollectLogs || in.ID == "" || rec.Service.Kind != in.Kind || rec.Service.BaseURL != in.BaseURL || rec.Service.Enabled != in.Enabled || rec.Service.AllowPrivate != in.AllowPrivate || in.Token != "" || in.ClearToken
 		if in.ClearToken {
 			cipher = ""
 		}
@@ -209,7 +224,7 @@ func (e *Engine) Save(ctx context.Context, actor string, in ServiceInput) (Servi
 				return errors.New("monitor credential could not be encrypted")
 			}
 		}
-		rec.Service = Service{ID: id, Name: in.Name, Kind: in.Kind, BaseURL: in.BaseURL, UIURL: in.UIURL, Group: in.Group, Enabled: in.Enabled, IntervalSeconds: in.IntervalSeconds, TimeoutSeconds: in.TimeoutSeconds, FailureThreshold: in.FailureThreshold, RecoveryThreshold: in.RecoveryThreshold, AllowPrivate: in.AllowPrivate, Generation: rec.Service.Generation, CreatedAt: rec.Service.CreatedAt, UpdatedAt: now}
+		rec.Service = Service{PublicStatus: in.PublicStatus, CollectModels: in.CollectModels, CollectLogs: in.CollectLogs, ID: id, Name: in.Name, Kind: in.Kind, BaseURL: in.BaseURL, UIURL: in.UIURL, Group: in.Group, Enabled: in.Enabled, IntervalSeconds: in.IntervalSeconds, TimeoutSeconds: in.TimeoutSeconds, FailureThreshold: in.FailureThreshold, RecoveryThreshold: in.RecoveryThreshold, AllowPrivate: in.AllowPrivate, Generation: rec.Service.Generation, CreatedAt: rec.Service.CreatedAt, UpdatedAt: now}
 		rec.Cipher = cipher
 		rec.NextDue = now.Add(time.Duration(in.IntervalSeconds) * time.Second)
 		if err := tx.Put(servicesBucket, id, rec); err != nil {
@@ -279,6 +294,15 @@ func (e *Engine) serviceWithState(tx storage.Tx, rec serviceRecord) (Service, er
 	s.EvidenceLevel = "process"
 	if s.Kind == KindHTTP || s.Kind == KindTCP {
 		s.EvidenceLevel = "connectivity_only"
+	}
+	if s.Kind == KindOpenAI {
+		s.EvidenceLevel = "model_catalog"
+	}
+	if s.Kind == KindMihomo {
+		s.EvidenceLevel = "subscription_metadata"
+	}
+	if s.Kind == KindStatuspage {
+		s.EvidenceLevel = "provider_reported"
 	}
 	// Capability declarations for the basic-check slice, never probe results.
 	// See docs/COMPATIBILITY.md; no inference or registry request is performed.

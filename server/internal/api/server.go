@@ -36,6 +36,7 @@ type Server struct {
 	options       Options
 	mux           *http.ServeMux
 	databaseCheck chan struct{}
+	serviceTest   chan struct{}
 }
 
 type envelope struct {
@@ -118,10 +119,10 @@ func projectService(s monitor.Service) deviceService {
 }
 
 func New(store storage.Store, accessService *access.Service, monitorEngine *monitor.Engine, options Options) http.Handler {
-	s := &Server{store: store, access: accessService, monitor: monitorEngine, options: options, mux: http.NewServeMux(), databaseCheck: make(chan struct{}, 1)}
+	s := &Server{store: store, access: accessService, monitor: monitorEngine, options: options, mux: http.NewServeMux(), databaseCheck: make(chan struct{}, 1), serviceTest: make(chan struct{}, 1)}
 	s.routes()
 	s.mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
-		writeError(w, http.StatusNotFound, "not_found", "API route was not found")
+		writeError(w, http.StatusNotFound, "not_found", "未找到 API 接口。")
 	})
 	s.mux.Handle("/", webui.Handler())
 	return s.security(s.mux)
@@ -134,7 +135,7 @@ func (s *Server) routes() {
 	})
 	s.mux.HandleFunc("GET /health/ready", func(w http.ResponseWriter, r *http.Request) {
 		if err := s.store.Ping(r.Context()); err != nil {
-			writeError(w, http.StatusServiceUnavailable, "not_ready", "Relay database is unavailable")
+			writeError(w, http.StatusServiceUnavailable, "not_ready", "Relay 数据库暂不可用。")
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ready"})
@@ -249,6 +250,20 @@ func (s *Server) routes() {
 		}
 		return items, http.StatusOK, err
 	}})
+	s.handle("POST /api/v1/services/test", route{admin: true, write: true, fn: func(q request) (any, int, error) {
+		var input monitor.ServiceInput
+		if err := decode(q.r, &input); err != nil {
+			return nil, 0, err
+		}
+		select {
+		case q.s.serviceTest <- struct{}{}:
+			defer func() { <-q.s.serviceTest }()
+		default:
+			return nil, 0, &HTTPError{Status: http.StatusConflict, Code: "service_test_busy", Message: "已有连通测试正在进行，请稍后重试。"}
+		}
+		result, err := q.s.monitor.Preview(q.r.Context(), input)
+		return result, http.StatusOK, err
+	}})
 	s.handle("POST /api/v1/services", route{admin: true, write: true, fn: func(q request) (any, int, error) {
 		var p monitor.ServiceInput
 		if err := decode(q.r, &p); err != nil {
@@ -279,7 +294,7 @@ func (s *Server) routes() {
 	s.handle("DELETE /api/v1/services/{service_id}", route{admin: true, write: true, fn: func(q request) (any, int, error) {
 		generation, err := strconv.ParseInt(q.r.URL.Query().Get("generation"), 10, 64)
 		if err != nil {
-			return nil, 0, badRequest("invalid_generation", "generation is required")
+			return nil, 0, badRequest("invalid_generation", "缺少配置版本，请刷新后重试。")
 		}
 		actor, _ := principal(q.r.Context())
 		if err = q.s.monitor.Remove(q.r.Context(), actor.ID, q.r.PathValue("service_id"), generation); err != nil {
@@ -359,11 +374,11 @@ func (s *Server) handle(pattern string, rt route) {
 			sessionCookie, cookieErr := r.Cookie("relay_session")
 			cookieAuth := cookieErr == nil && sessionCookie.Value != ""
 			if !s.sameOrigin(r) && (!bearerToken(r) || cookieAuth) {
-				writeError(w, http.StatusForbidden, "origin_rejected", "Write request origin is not allowed")
+				writeError(w, http.StatusForbidden, "origin_rejected", "访问来源不受信任，请核对 Relay 地址配置。")
 				return
 			}
 			if cookieAuth && !validCSRF(r) {
-				writeError(w, http.StatusForbidden, "csrf_rejected", "Cookie-authenticated writes require a valid CSRF token")
+				writeError(w, http.StatusForbidden, "csrf_rejected", "安全校验失败，请刷新页面后重试。")
 				return
 			}
 		}
@@ -382,18 +397,18 @@ func (s *Server) handle(pattern string, rt route) {
 		}
 		if err != nil && !rt.public {
 			if credential == "" || errors.Is(err, access.ErrUnauthorized) || errors.Is(err, access.ErrExpired) {
-				writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
+				writeError(w, http.StatusUnauthorized, "unauthorized", "请先登录。")
 			} else {
 				s.fail(w, err)
 			}
 			return
 		}
 		if rt.admin && p.Role != "admin" {
-			writeError(w, http.StatusForbidden, "forbidden", "Administrator access required")
+			writeError(w, http.StatusForbidden, "forbidden", "需要管理员权限。")
 			return
 		}
 		if p.MustChangePassword && !rt.initial && !rt.public {
-			writeError(w, http.StatusForbidden, "password_change_required", "Set a permanent password before using Relay")
+			writeError(w, http.StatusForbidden, "password_change_required", "请先设置正式密码。")
 			return
 		}
 		ctx := context.WithValue(r.Context(), principalKey{}, p)
@@ -494,30 +509,30 @@ func (s *Server) successStatus(w http.ResponseWriter, r *http.Request, relayID s
 	writeJSON(w, status, envelope{APIVersion: "v1", SchemaVersion: 1, RelayID: relayID, DataVersion: version, GeneratedAt: time.Now().UTC(), Data: data})
 }
 func (s *Server) fail(w http.ResponseWriter, err error) {
-	status, code, message := http.StatusInternalServerError, "internal_error", "Request could not be completed"
+	status, code, message := http.StatusInternalServerError, "internal_error", "操作未能完成，请稍后重试或查看服务日志。"
 	var apiErr *HTTPError
 	if errors.As(err, &apiErr) {
 		status, code, message = apiErr.Status, apiErr.Code, apiErr.Message
 	}
 	switch {
 	case errors.Is(err, access.ErrUnauthorized), errors.Is(err, access.ErrExpired):
-		status, code, message = http.StatusUnauthorized, "unauthorized", "Credentials are invalid or expired"
+		status, code, message = http.StatusUnauthorized, "unauthorized", "账号、密码无效或登录已过期。"
 	case errors.Is(err, access.ErrInvalidInput), errors.Is(err, monitor.ErrValidation):
-		status, code, message = http.StatusBadRequest, "invalid_request", "Input values are invalid"
+		status, code, message = http.StatusBadRequest, "invalid_request", "输入无效，请检查名称、服务地址、检查间隔和凭据。"
 	case errors.Is(err, access.ErrAlreadyInitialized), errors.Is(err, monitor.ErrConflict):
-		status, code, message = http.StatusConflict, "conflict", "Resource state changed; refresh and try again"
+		status, code, message = http.StatusConflict, "conflict", "配置已变更，请刷新后重试。"
 	case errors.Is(err, access.ErrBootstrapDisabled):
-		status, code, message = http.StatusForbidden, "bootstrap_disabled", "Administrator initialization is disabled"
+		status, code, message = http.StatusForbidden, "bootstrap_disabled", "管理员初始化入口已关闭。"
 	case errors.Is(err, access.ErrRateLimited):
-		status, code, message = http.StatusTooManyRequests, "rate_limited", "Too many attempts; try again later"
+		status, code, message = http.StatusTooManyRequests, "rate_limited", "尝试次数过多，请稍后重试。"
 		w.Header().Set("Retry-After", "300")
 	case errors.Is(err, context.DeadlineExceeded):
-		status, code, message = http.StatusServiceUnavailable, "request_timeout", "Request timed out; retry later"
+		status, code, message = http.StatusServiceUnavailable, "request_timeout", "请求超时，请稍后重试。"
 	case errors.Is(err, monitor.ErrPaused):
-		status, code, message = http.StatusConflict, "paused", "Monitoring is paused"
+		status, code, message = http.StatusConflict, "paused", "服务已暂停，请先恢复检查。"
 	}
 	if errors.Is(err, storage.ErrNotFound) {
-		status, code, message = http.StatusNotFound, "not_found", "Requested record was not found"
+		status, code, message = http.StatusNotFound, "not_found", "未找到对应记录。"
 	}
 	writeError(w, status, code, message)
 }
@@ -536,7 +551,7 @@ func decode(r *http.Request, dst any) error {
 	if value := r.Header.Get("Content-Type"); value != "" {
 		mediaType, _, err := mime.ParseMediaType(value)
 		if err != nil || mediaType != "application/json" {
-			return &HTTPError{Status: http.StatusUnsupportedMediaType, Code: "unsupported_media_type", Message: "Use application/json"}
+			return &HTTPError{Status: http.StatusUnsupportedMediaType, Code: "unsupported_media_type", Message: "请使用 JSON 格式提交。"}
 		}
 	}
 	r.Body = http.MaxBytesReader(nil, r.Body, 64<<10)
@@ -544,21 +559,21 @@ func decode(r *http.Request, dst any) error {
 	if err != nil {
 		var max *http.MaxBytesError
 		if errors.As(err, &max) {
-			return &HTTPError{Status: http.StatusRequestEntityTooLarge, Code: "body_too_large", Message: "Request body exceeds 64 KiB"}
+			return &HTTPError{Status: http.StatusRequestEntityTooLarge, Code: "body_too_large", Message: "请求内容不能超过 64 KiB。"}
 		}
-		return badRequest("invalid_request", "Request body is invalid")
+		return badRequest("invalid_request", "请求内容无效。")
 	}
 	if value := strings.TrimSpace(string(body)); value == "" || value[0] != '{' {
-		return badRequest("invalid_request", "Request body must be a JSON object")
+		return badRequest("invalid_request", "请求内容必须是 JSON 对象。")
 	}
 	dec := json.NewDecoder(strings.NewReader(string(body)))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
-		return badRequest("invalid_request", "Request body is invalid")
+		return badRequest("invalid_request", "请求内容无效。")
 	}
 	var extra any
 	if err := dec.Decode(&extra); err != io.EOF {
-		return badRequest("invalid_request", "Request body must contain one JSON value")
+		return badRequest("invalid_request", "请求内容只能包含一个 JSON 对象。")
 	}
 	return nil
 }
@@ -569,7 +584,7 @@ func parseLimit(r *http.Request) (int, error) {
 	}
 	n, err := strconv.Atoi(raw)
 	if err != nil || n < 1 || n > 500 {
-		return 0, badRequest("invalid_limit", "limit must be between 1 and 500")
+		return 0, badRequest("invalid_limit", "读取数量应在 1 到 500 之间。")
 	}
 	return n, nil
 }

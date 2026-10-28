@@ -1,7 +1,8 @@
+import { CheckDetails } from './CheckDetails';
 import { useState } from 'react';
 import type { Alert, Service } from './types';
 import { Button, Icon } from './ui';
-import { evidence, kindLabels, states, time } from './presentation';
+import { message, evidence, kindLabels, states, time } from './presentation';
 
 type Props = {
   services: Service[];
@@ -75,7 +76,7 @@ function attentionReason(service: Service) {
   if (service.open_incident) return service.enabled ? '故障事件尚未恢复' : '已暂停，故障事件仍未恢复';
   if (service.freshness === 'stale') return '采集已过期，需重新检查';
   if (!service.last_check_at) return '等待首次检查';
-  return service.current?.message || states[serviceStatus(service)] || '检查结果未知';
+  return message(service.current?.message) || states[serviceStatus(service)] || '检查结果未知';
 }
 
 export function ServicesOverview(props: Props) {
@@ -165,8 +166,8 @@ export function ServicesOverview(props: Props) {
           </li>)}
         </ol>
         {!observed.length && <p className="cockpit-hint">尚无检查记录，首次检查后显示。</p>}
-        <p className="event-preview" title={recent?.message}>{recent
-          ? `${props.alertsComplete ? '最近事件' : '已加载事件'}：${services.find(service => service.id === recent.service_id)?.name || recent.service_id} · ${recent.message}`
+        <p className="event-preview" title={message(recent?.message)}>{recent
+          ? `${props.alertsComplete ? '最近事件' : '已加载事件'}：${services.find(service => service.id === recent.service_id)?.name || recent.service_id} · ${message(recent.message)}`
           : !props.alertsCurrent || !props.alertsSynced ? '告警摘要待同步，请查看告警中心。' : '暂无告警记录；待观测不代表健康。'}</p>
       </section>
     </div>
@@ -224,7 +225,8 @@ function ServiceRow({ service, admin, busy, onHistory, onEdit, onToggle, onCheck
         <div><dt>连续失败</dt><dd>{service.failure_count === undefined ? '未提供' : `${service.failure_count} / ${service.failure_threshold}`}</dd></div>
         <div><dt>恢复计数</dt><dd>{service.recovery_count === undefined ? '未提供' : `${service.recovery_count} / ${service.recovery_threshold}`}</dd></div>
       </dl>
-      {service.current?.message && <p className="check-detail">{service.current.message}</p>}
+      {service.current?.message && <p className="check-detail">{message(service.current.message)}</p>}
+      <CheckDetails check={service.current} />
       <div className="buttons">
         <Button className="secondary" disabled={busy} onClick={() => onHistory(service)}><Icon name="history" />历史</Button>
         {service.ui_url && <a className="button secondary" href={service.ui_url} target="_blank" rel="noreferrer noopener">WebUI ↗</a>}

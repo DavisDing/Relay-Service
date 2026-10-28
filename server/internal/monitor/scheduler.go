@@ -138,7 +138,7 @@ func (e *Engine) recoverInterrupted(ctx context.Context) error {
 				if p.Check.Status == StatusRunning {
 					p.Check.Status = StatusInterrupted
 					p.Check.Class = "process_interrupted"
-					p.Check.Message = "Check interrupted by Relay restart"
+					p.Check.Message = "Relay 重启导致检查中断。"
 					p.Check.CompletedAt = e.now()
 					p.Check.DurationMS = elapsedMilliseconds(p.Check.StartedAt, p.Check.CompletedAt)
 					if err := e.closePending(tx, p.Check); err != nil {
@@ -180,7 +180,7 @@ func (e *Engine) claim(ctx context.Context) (Check, serviceRecord, bool, error) 
 				if err != nil || rec.Service.Tombstone || !rec.Service.Enabled || rec.Service.Generation != p.Check.Generation {
 					p.Check.Status = StatusInterrupted
 					p.Check.Class = "configuration_changed"
-					p.Check.Message = "Configuration changed before execution"
+					p.Check.Message = "执行前配置已变更，此次检查已中断。"
 					p.Check.CompletedAt = e.now()
 					if err := e.closePending(tx, p.Check); err != nil {
 						return err
@@ -255,12 +255,13 @@ func (e *Engine) worker(ctx context.Context) error {
 		c.Status = result.status
 		c.Class = result.class
 		c.Message = result.message
+		c.Details = result.details
 		// Cancellation is an interrupted observation, never a failure attributed to the target.
 		if ctx.Err() != nil {
 			c.Success = false
 			c.Status = StatusInterrupted
 			c.Class = "process_interrupted"
-			c.Message = "Check interrupted by Relay shutdown"
+			c.Message = "Relay 关闭导致检查中断。"
 		}
 		finishCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		err = e.finish(finishCtx, c)
