@@ -69,8 +69,6 @@ jobs:
         run: go vet ./... && go vet -tags webassets ./...
       - name: Test release metadata validation
         run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
-      - name: Verify embedded NAS startup scripts
-        run: python3 scripts/render-nas-compose.py --check
       - name: Test release packaging
         run: python3 -m unittest discover -s scripts -p 'test_*.py'
       - name: Validate release and local-build Compose configuration
@@ -79,7 +77,10 @@ jobs:
           trap 'rm -rf "$task_dir"' EXIT
           docker compose -f deploy/nas/docker-compose.yaml config --quiet
           sh deploy/nas/generate-env.sh "$task_dir/.env"
-          docker compose --env-file "$task_dir/.env" -f deploy/nas/docker-compose.yaml config --quiet
+          docker compose --env-file "$task_dir/.env" -f deploy/nas/docker-compose.yaml \
+            -f deploy/nas/docker-compose.settings.example.yaml config --quiet
+          docker compose -f deploy/nas/docker-compose.yaml \
+            -f deploy/nas/docker-compose.network.example.yaml config --quiet
           RELAY_IMAGE=relay-service:local sh deploy/nas/generate-env.sh "$task_dir/local.env"
           docker compose --env-file "$task_dir/local.env" -f deploy/nas/docker-compose.yaml \
             -f deploy/nas/docker-compose.local-build.yaml config --quiet
@@ -117,6 +118,35 @@ jobs:
             CREATED=${{ steps.source.outputs.created }}
       - name: Inspect the Linux arm64 binary without running it
         run: python3 scripts/check-oci-architecture.py /tmp/relay-service-arm64.tar arm64
+      - name: Build and load the PostgreSQL companion for Linux amd64
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/nas/Dockerfile.postgres
+          platforms: linux/amd64
+          load: true
+          tags: relay-service-postgres:ci-amd64
+          build-args: |
+            VERSION=${{ inputs.version }}
+            REVISION=${{ steps.source.outputs.commit }}
+            CREATED=${{ steps.source.outputs.created }}
+      - name: Check companion image packaging without starting PostgreSQL
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+          EXPECTED_REVISION: ${{ steps.source.outputs.commit }}
+        run: sh scripts/postgres-image-smoke.sh relay-service-postgres:ci-amd64 "$EXPECTED_VERSION" "$EXPECTED_REVISION"
+      - name: Build the PostgreSQL companion for Linux arm64 without running it
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/nas/Dockerfile.postgres
+          platforms: linux/arm64
+          push: false
+          outputs: type=cacheonly
+          build-args: |
+            VERSION=${{ inputs.version }}
+            REVISION=${{ steps.source.outputs.commit }}
+            CREATED=${{ steps.source.outputs.created }}
       - name: Record validation boundaries
         if: always()
         run: |
@@ -124,6 +154,7 @@ jobs:
             echo '### NAS delivery validation boundaries'
             echo '- Linux amd64: Docker build and container checks without PostgreSQL.'
             echo '- Linux arm64: build and ELF architecture check only; no runtime or device acceptance.'
+            echo '- PostgreSQL companion: amd64 packaging/CLI check and arm64 build; database not started.'
             echo '- PostgreSQL integration: intentionally skipped; no test database is configured.'
             echo '- NAS, UGOS Projects, upstream services and browser/device acceptance remain separate.'
           } >> "$GITHUB_STEP_SUMMARY"

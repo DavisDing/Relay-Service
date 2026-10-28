@@ -1,201 +1,24 @@
-# Requires the matching Relay image with automatic deployment secrets and first-login password setup.
 name: relay-service
+
 services:
   relay:
-    image: ${RELAY_IMAGE:-ghcr.io/davisding/relay-service:latest}
-    container_name: relay-service
+    image: ghcr.io/davisding/relay-service:latest
     restart: unless-stopped
-    init: true
-    user: "65532:65532"
-    read_only: true
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    tmpfs:
-      - /tmp:noexec,nosuid,size=16m,uid=65532,gid=65532
-    environment:
-      RELAY_LISTEN_ADDR: :8787
-      RELAY_PUBLIC_URL: ${RELAY_PUBLIC_URL:-}
-      RELAY_DEPLOYMENT_FILE: /relay-secrets/current/deployment.env
-      RELAY_BOOTSTRAP_TOKEN: ${RELAY_BOOTSTRAP_TOKEN:-}
-      RELAY_SECURE_COOKIES: ${RELAY_SECURE_COOKIES:-}
-      RELAY_LOG_LEVEL: ${RELAY_LOG_LEVEL:-info}
-    volumes:
-      - relay-secrets:/relay-secrets:ro
     ports:
-      - "${RELAY_BIND_ADDRESS:-0.0.0.0}:${RELAY_HOST_PORT:-8787}:8787"
+      - "8787:8787"
+    volumes:
+      - relay-secrets:/relay-secrets
     depends_on:
       postgres:
         condition: service_healthy
-    networks:
-      - relay-backend
-      - ai-network
-    healthcheck:
-      test: ["CMD","/relay","healthcheck"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
 
   postgres:
-    image: postgres:latest
+    image: ghcr.io/davisding/relay-service-postgres:latest
     restart: unless-stopped
-    entrypoint:
-      - /bin/sh
-      - -ec
-      - |
-        # BEGIN GENERATED POSTGRES STARTUP
-        cat > /docker-entrypoint-initdb.d/001-roles.sh <<'RELAY_INIT_ROLES'
-        #!/bin/sh
-        set -eu
-        : "$${RELAY_DB_PASSWORD:?set RELAY_DB_PASSWORD}"
-        : "$${RELAY_MIGRATOR_PASSWORD:?set RELAY_MIGRATOR_PASSWORD}"
-        : "$${RELAY_APP_PASSWORD:?set RELAY_APP_PASSWORD}"
-        psql --username "$$POSTGRES_USER" --dbname "$$POSTGRES_DB" --set ON_ERROR_STOP=1 \
-          --set db_password="$$RELAY_DB_PASSWORD" \
-          --set migrator_password="$$RELAY_MIGRATOR_PASSWORD" \
-          --set app_password="$$RELAY_APP_PASSWORD" <<'SQL'
-        CREATE ROLE relay_owner LOGIN PASSWORD :'db_password';
-        CREATE ROLE relay_migrator LOGIN PASSWORD :'migrator_password';
-        CREATE ROLE relay_app LOGIN PASSWORD :'app_password';
-        CREATE DATABASE relay OWNER relay_owner;
-        REVOKE CONNECT ON DATABASE relay FROM PUBLIC;
-        GRANT CONNECT ON DATABASE relay TO relay_owner, relay_migrator, relay_app;
-        SQL
-        psql --username "$$POSTGRES_USER" --dbname relay --set ON_ERROR_STOP=1 <<'SQL'
-        REVOKE CREATE ON SCHEMA public FROM PUBLIC;
-        GRANT USAGE ON SCHEMA public TO relay_migrator, relay_app;
-        GRANT CREATE ON SCHEMA public TO relay_migrator;
-        ALTER DEFAULT PRIVILEGES FOR ROLE relay_migrator IN SCHEMA public GRANT SELECT ON TABLES TO relay_app;
-        SQL
-        RELAY_INIT_ROLES
-        #!/bin/sh
-        # Runs inside the official PostgreSQL container, before its normal entrypoint.
-        # Store one complete generation atomically; never regenerate secrets for data.
-        set -eu
-        umask 077
-        secrets_dir=$${RELAY_SECRETS_DIR:-/relay-secrets}
-        data_root=$${RELAY_POSTGRES_DATA_ROOT:-/var/lib/postgresql}
-        current="$$secrets_dir/current"
-        secret_names='POSTGRES_SUPERUSER_PASSWORD RELAY_DB_PASSWORD RELAY_MIGRATOR_PASSWORD RELAY_APP_PASSWORD RELAY_ENCRYPTION_KEY RELAY_INITIAL_PASSWORD'
-        if [ ! -d "$$data_root" ] || [ -L "$$current" ]; then
-          echo 'Invalid database or deployment secrets directory.' >&2
-          exit 1
-        fi
-        mkdir -p "$$secrets_dir"
-        chmod 755 "$$secrets_dir"
-
-        if [ ! -d "$$current" ]; then
-          # Existing manual installations can import all their original secrets. An
-          # incomplete set must fail instead of silently losing database/key access.
-          if [ -n "$$(find "$$data_root" -name PG_VERSION -type f -print -quit)" ]; then
-            if [ -z "$${POSTGRES_SUPERUSER_PASSWORD:-}" ] || [ -z "$${RELAY_DB_PASSWORD:-}" ] ||
-               [ -z "$${RELAY_MIGRATOR_PASSWORD:-}" ] || [ -z "$${RELAY_APP_PASSWORD:-}" ] || [ -z "$${RELAY_ENCRYPTION_KEY:-}" ]; then
-              echo 'Existing database has no deployment secrets. Restore the secrets volume or provide all original secrets; refusing to regenerate.' >&2
-              exit 1
-            fi
-          fi
-          stage=$$(mktemp -d "$$secrets_dir/.pending.XXXXXX")
-          trap 'rm -rf "$$stage"' EXIT HUP INT TERM
-          for name in $$secret_names; do
-            # Only read the explicit allowlist; never eval environment or stored data.
-            case "$$name" in
-              POSTGRES_SUPERUSER_PASSWORD) value=$${POSTGRES_SUPERUSER_PASSWORD:-} ;;
-              RELAY_DB_PASSWORD) value=$${RELAY_DB_PASSWORD:-} ;;
-              RELAY_MIGRATOR_PASSWORD) value=$${RELAY_MIGRATOR_PASSWORD:-} ;;
-              RELAY_APP_PASSWORD) value=$${RELAY_APP_PASSWORD:-} ;;
-              RELAY_ENCRYPTION_KEY) value=$${RELAY_ENCRYPTION_KEY:-} ;;
-              RELAY_INITIAL_PASSWORD) value=$${RELAY_INITIAL_PASSWORD:-} ;;
-            esac
-            if [ -z "$$value" ]; then value=$$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n'); fi
-            case "$$value" in
-              *[!a-zA-Z0-9_-]*|'') echo "Invalid $$name; use URL-safe random characters." >&2; exit 1 ;;
-            esac
-            if [ "$${#value}" -lt 32 ]; then echo "$$name must have at least 32 random characters." >&2; exit 1; fi
-            if [ "$$name" = RELAY_ENCRYPTION_KEY ]; then
-              case "$$value" in *[!a-fA-F0-9]*) echo 'Encryption key must be hexadecimal.' >&2; exit 1 ;; esac
-              if [ "$${#value}" != 64 ]; then echo 'Encryption key must have 64 hexadecimal characters.' >&2; exit 1; fi
-            fi
-            printf '%s' "$$value" > "$$stage/$$name"
-          done
-          app=$$(cat "$$stage/RELAY_APP_PASSWORD")
-          migrator=$$(cat "$$stage/RELAY_MIGRATOR_PASSWORD")
-          {
-            printf 'RELAY_DATABASE_URL=postgres://relay_app:%s@postgres:5432/relay?sslmode=disable\n' "$$app"
-            printf 'RELAY_MIGRATION_DATABASE_URL=postgres://relay_migrator:%s@postgres:5432/relay?sslmode=disable\n' "$$migrator"
-            printf 'RELAY_ENCRYPTION_KEY=%s\n' "$$(cat "$$stage/RELAY_ENCRYPTION_KEY")"
-            printf 'RELAY_INITIAL_PASSWORD=%s\n' "$$(cat "$$stage/RELAY_INITIAL_PASSWORD")"
-          } > "$$stage/deployment.env"
-          # Relay may traverse the directory and read only its configuration file.
-          # Keep superuser/owner password files root-only, even on its read-only mount.
-          chown 0:65532 "$$stage"
-          chmod 710 "$$stage"
-          chown 65532:65532 "$$stage/deployment.env"
-          # No other container writes this volume. Rename publishes the full generation.
-          mv "$$stage" "$$current"
-          trap - EXIT HUP INT TERM
-        fi
-
-        for name in $$secret_names; do
-          if [ ! -s "$$current/$$name" ] || [ -L "$$current/$$name" ]; then
-            echo 'Deployment secrets are incomplete; restore the secrets volume.' >&2
-            exit 1
-          fi
-          value=$$(cat "$$current/$$name")
-          case "$$value" in *[!a-zA-Z0-9_-]*|'') echo 'Invalid stored deployment secret; restore the secrets volume.' >&2; exit 1 ;; esac
-          if [ "$${#value}" -lt 32 ]; then echo 'Invalid stored deployment secret length.' >&2; exit 1; fi
-        done
-        if [ ! -s "$$current/deployment.env" ] || [ -L "$$current/deployment.env" ]; then
-          echo 'Deployment configuration is missing; restore the secrets volume.' >&2
-          exit 1
-        fi
-        POSTGRES_PASSWORD=$$(cat "$$current/POSTGRES_SUPERUSER_PASSWORD")
-        RELAY_DB_PASSWORD=$$(cat "$$current/RELAY_DB_PASSWORD")
-        RELAY_MIGRATOR_PASSWORD=$$(cat "$$current/RELAY_MIGRATOR_PASSWORD")
-        RELAY_APP_PASSWORD=$$(cat "$$current/RELAY_APP_PASSWORD")
-        if ! {
-          printf 'RELAY_DATABASE_URL=postgres://relay_app:%s@postgres:5432/relay?sslmode=disable\n' "$$RELAY_APP_PASSWORD"
-          printf 'RELAY_MIGRATION_DATABASE_URL=postgres://relay_migrator:%s@postgres:5432/relay?sslmode=disable\n' "$$RELAY_MIGRATOR_PASSWORD"
-          printf 'RELAY_ENCRYPTION_KEY=%s\n' "$$(cat "$$current/RELAY_ENCRYPTION_KEY")"
-          printf 'RELAY_INITIAL_PASSWORD=%s\n' "$$(cat "$$current/RELAY_INITIAL_PASSWORD")"
-        } | cmp -s - "$$current/deployment.env"; then
-          echo 'Stored deployment configuration does not match its secrets; restore the secrets volume.' >&2
-          exit 1
-        fi
-        export POSTGRES_PASSWORD RELAY_DB_PASSWORD RELAY_MIGRATOR_PASSWORD RELAY_APP_PASSWORD
-        unset POSTGRES_PASSWORD_FILE
-        exec docker-entrypoint.sh "$$@"
-        # END GENERATED POSTGRES STARTUP
-      - relay-postgres
-    command: ["postgres"]
-    environment:
-      POSTGRES_DB: postgres
-      POSTGRES_USER: postgres
-      POSTGRES_SUPERUSER_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:-}
-      RELAY_DB_PASSWORD: ${RELAY_DB_PASSWORD:-}
-      RELAY_MIGRATOR_PASSWORD: ${RELAY_MIGRATOR_PASSWORD:-}
-      RELAY_APP_PASSWORD: ${RELAY_APP_PASSWORD:-}
-      RELAY_ENCRYPTION_KEY: ${RELAY_ENCRYPTION_KEY:-}
     volumes:
       - relay-postgres:/var/lib/postgresql
       - relay-secrets:/relay-secrets
-    networks:
-      - relay-backend
-    healthcheck:
-      test: ["CMD-SHELL","pg_isready -h 127.0.0.1 -U postgres -d postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 6
-      start_period: 30s
 
 volumes:
   relay-postgres:
   relay-secrets:
-
-networks:
-  relay-backend:
-    driver: bridge
-  ai-network:
-    external: true
-    name: ${AI_NETWORK_NAME:-ai-network}

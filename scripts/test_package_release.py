@@ -14,8 +14,10 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 IMAGE = 'ghcr.io/davisding/relay-service@sha256:' + 'ab' * 32
+POSTGRES_IMAGE = 'ghcr.io/davisding/relay-service-postgres@sha256:' + 'de' * 32
 TAG = 'v0.1.0-rc.1'
-INPUTS = ('deploy/nas/docker-compose.yaml', 'deploy/nas/init-db/001-roles.sh', 'deploy/nas/start-postgres.sh',
+INPUTS = ('deploy/nas/docker-compose.yaml', 'deploy/nas/docker-compose.settings.example.yaml',
+          'deploy/nas/docker-compose.network.example.yaml',
           'deploy/nas/.env.example', 'deploy/nas/generate-env.sh', 'scripts/package-release.sh')
 SECRETS = ('POSTGRES_SUPERUSER_PASSWORD', 'RELAY_DB_PASSWORD', 'RELAY_MIGRATOR_PASSWORD',
            'RELAY_APP_PASSWORD', 'RELAY_BOOTSTRAP_TOKEN', 'RELAY_ENCRYPTION_KEY')
@@ -40,8 +42,8 @@ class PackageReleaseTests(unittest.TestCase):
         self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ.get('PATH', ''))
         self.output = self.folder / 'release'
 
-    def package(self, tag=TAG, image=IMAGE, output=None):
-        return subprocess.run(['sh', str(self.root / 'scripts/package-release.sh'), tag, image,
+    def package(self, tag=TAG, image=IMAGE, output=None, postgres_image=POSTGRES_IMAGE):
+        return subprocess.run(['sh', str(self.root / 'scripts/package-release.sh'), tag, image, postgres_image,
                                str(output or self.output)], cwd=self.folder, env=self.env,
                               capture_output=True, text=True)
 
@@ -78,25 +80,27 @@ class PackageReleaseTests(unittest.TestCase):
             self.assertEqual(hashlib.sha256((self.output / name).read_bytes()).hexdigest(), digest)
         self.assertEqual({str(p.relative_to(nas)) for p in nas.rglob('*') if p.is_file()},
                          {'.env.example', 'docker-compose.yaml', 'generate-env.sh',
-                          'init-db/001-roles.sh', 'start-postgres.sh', 'README.txt'})
+                          'docker-compose.settings.example.yaml', 'docker-compose.network.example.yaml', 'README.txt'})
         compose = (nas / 'docker-compose.yaml').read_text()
         self.assertNotRegex(compose, r'(?m)^\s*build\s*:')
-        self.assertEqual(compose.count('${RELAY_IMAGE:-' + IMAGE + '}'), 1)
+        self.assertEqual(compose.count('image: ' + IMAGE), 1)
         self.assertNotIn('relay-migrate:', compose)
         relay_section = compose.split('  relay:\n', 1)[1].split('  postgres:\n', 1)[0]
-        self.assertIn('RELAY_DEPLOYMENT_FILE: /relay-secrets/current/deployment.env', relay_section)
-        self.assertIn('relay-secrets:/relay-secrets:ro', relay_section)
+        self.assertNotIn('environment:', relay_section)
+        self.assertIn('relay-secrets:/relay-secrets', relay_section)
         self.assertNotIn('${RELAY_APP_PASSWORD:?', relay_section)
         self.assertNotIn('command: ["migrate"]', relay_section)
         self.assertNotIn('service_completed_successfully', compose)
         self.assertNotIn('docker-compose.init.yaml', (nas / 'README.txt').read_text())
         self.assertIn('automatically applies only pending SQL files', (nas / 'README.txt').read_text())
-        self.assertIn('image: postgres:latest', compose)
+        self.assertIn('image: ' + POSTGRES_IMAGE, compose)
         self.assertIn('relay-postgres:/var/lib/postgresql', compose)
         self.assertNotIn('./init-db/001-roles.sh:', compose)
-        self.assertIn('# BEGIN GENERATED POSTGRES STARTUP', compose)
-        self.assertTrue((nas / 'init-db/001-roles.sh').is_file())
-        self.assertEqual(stat.S_IMODE((nas / 'init-db/001-roles.sh').stat().st_mode), 0o644)
+        self.assertNotIn('entrypoint:', compose)
+        self.assertNotIn('networks:', compose)
+        settings = (nas / 'docker-compose.settings.example.yaml').read_text()
+        self.assertIn('${RELAY_IMAGE:-' + IMAGE + '}', settings)
+        self.assertIn('${RELAY_POSTGRES_IMAGE:-' + POSTGRES_IMAGE + '}', settings)
         self.assertEqual(stat.S_IMODE((nas / 'generate-env.sh').stat().st_mode), 0o755)
         self.assertIn('RELAY_IMAGE=' + IMAGE, (nas / '.env.example').read_text())
         self.assertEqual((nas / '.env.example').read_bytes(), (self.output / f'relay-service-{TAG}.env.example').read_bytes())
@@ -109,7 +113,9 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertEqual(metadata['version'], TAG)
         self.assertEqual(metadata['image'], IMAGE)
         self.assertEqual(metadata['git_commit'], 'c' * 40)
-        self.assertEqual(metadata['postgres_image'], 'postgres:latest')
+        self.assertEqual(metadata['postgres_image'], POSTGRES_IMAGE)
+        self.assertEqual(metadata['postgres_base_image'], 'postgres:latest')
+        self.assertIn('RELAY_POSTGRES_IMAGE=' + POSTGRES_IMAGE, (nas / '.env.example').read_text())
 
     def test_invalid_tags_and_images_are_rejected_before_output(self):
         tags = ('1.2.3', 'v1.2', 'v01.2.3', 'v1.02.3', 'v1.2.3-01',
@@ -128,6 +134,14 @@ class PackageReleaseTests(unittest.TestCase):
         for image in images:
             with self.subTest(image=image):
                 result = self.package(image=image)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(self.output.exists())
+
+    def test_companion_must_be_pinned_to_the_expected_repository(self):
+        for image in ('postgres:latest', IMAGE, POSTGRES_IMAGE + '\n',
+                      'ghcr.io/davisding/relay-service-postgres@sha256:short'):
+            with self.subTest(image=image):
+                result = self.package(postgres_image=image)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse(self.output.exists())
 
@@ -216,7 +230,7 @@ class PackageReleaseTests(unittest.TestCase):
 
     def test_source_compose_defaults_relay_service_to_latest(self):
         compose = (ROOT / 'deploy/nas/docker-compose.yaml').read_text()
-        self.assertEqual(compose.count('image: ${RELAY_IMAGE:-ghcr.io/davisding/relay-service:latest}'), 1)
+        self.assertEqual(compose.count('image: ghcr.io/davisding/relay-service:latest'), 1)
 
     def test_bundle_is_reproducible(self):
         self.assertEqual(self.package().returncode, 0)
@@ -227,9 +241,9 @@ class PackageReleaseTests(unittest.TestCase):
 
     def test_local_build_overlay_uses_repository_root(self):
         overlay = (ROOT / 'deploy/nas/docker-compose.local-build.yaml').read_text()
-        self.assertEqual(overlay.count('context: ../..'), 1)
-        self.assertEqual(overlay.count('dockerfile: deploy/nas/Dockerfile'), 1)
-        self.assertEqual(overlay.count('image: ${RELAY_IMAGE:-relay-service:local}'), 1)
+        self.assertEqual(overlay.count('context: ../..'), 2)
+        self.assertEqual(overlay.count('dockerfile: deploy/nas/Dockerfile\n'), 1)
+        self.assertEqual(overlay.count('image: relay-service:local'), 1)
 
 
 if __name__ == '__main__':

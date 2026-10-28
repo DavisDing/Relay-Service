@@ -116,16 +116,8 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	if cfg.InitialPassword != "" {
-		pending, err := accessSvc.EnsureInitialAdministrator(connectCtx, cfg.InitialPassword)
-		if err != nil {
-			return fmt.Errorf("prepare initial administrator: %w", err)
-		}
-		if pending {
-			// Deliberate deployment-only credential display. Never expose this
-			// password through HTTP, diagnostics or normal structured logging.
-			fmt.Fprintf(os.Stderr, "Relay first login — username: admin; temporary password: %s\nChange this password in the browser before using Relay.\n", cfg.InitialPassword)
-		}
+	if err := prepareInitialAdministrator(connectCtx, accessSvc, &cfg, os.Stderr); err != nil {
+		return err
 	}
 	engine := monitor.New(db, accessSvc)
 	workerCtx, workerCancel := context.WithCancel(ctx)

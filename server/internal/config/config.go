@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -20,6 +21,8 @@ type Config struct {
 	EncryptionKey        []byte
 	BootstrapToken       string
 	InitialPassword      string
+	DeploymentFile       string
+	InitialPasswordFile  string
 	SecureCookies        bool
 	LogLevel             string
 }
@@ -33,7 +36,9 @@ func DatabaseURLFromEnvironment() string { return os.Getenv("RELAY_DATABASE_URL"
 func LoadWith(getenv func(string) string) (Config, error) {
 	// NAS deployments persist generated secrets separately from the database.
 	// Explicit environment settings retain precedence for existing installations.
-	if path := strings.TrimSpace(getenv("RELAY_DEPLOYMENT_FILE")); path != "" {
+	deploymentFile := strings.TrimSpace(getenv("RELAY_DEPLOYMENT_FILE"))
+	initialPasswordFile := strings.TrimSpace(getenv("RELAY_INITIAL_PASSWORD_FILE"))
+	if path := deploymentFile; path != "" {
 		values, err := readDeploymentFile(path)
 		if err != nil {
 			return Config{}, err
@@ -54,6 +59,22 @@ func LoadWith(getenv func(string) string) (Config, error) {
 		return value
 	}
 	c := Config{ListenAddr: get("RELAY_LISTEN_ADDR", ":8787"), PublicURL: get("RELAY_PUBLIC_URL", ""), DatabaseURL: getenv("RELAY_DATABASE_URL"), BootstrapToken: getenv("RELAY_BOOTSTRAP_TOKEN"), InitialPassword: getenv("RELAY_INITIAL_PASSWORD"), LogLevel: get("RELAY_LOG_LEVEL", "info")}
+	c.DeploymentFile, c.InitialPasswordFile = deploymentFile, initialPasswordFile
+	if c.InitialPassword == "" && initialPasswordFile != "" {
+		info, err := os.Lstat(initialPasswordFile)
+		if err == nil {
+			if !info.Mode().IsRegular() || info.Size() > 1024 {
+				return Config{}, fmt.Errorf("invalid RELAY_INITIAL_PASSWORD_FILE; restore the original initial password file")
+			}
+			value, err := os.ReadFile(initialPasswordFile)
+			if err != nil {
+				return Config{}, fmt.Errorf("cannot read RELAY_INITIAL_PASSWORD_FILE")
+			}
+			c.InitialPassword = string(value)
+		} else if !os.IsNotExist(err) {
+			return Config{}, fmt.Errorf("cannot read RELAY_INITIAL_PASSWORD_FILE")
+		}
+	}
 	_, listenPort, err := net.SplitHostPort(c.ListenAddr)
 	portNumber, portErr := strconv.Atoi(listenPort)
 	if err != nil || portErr != nil || portNumber < 1 || portNumber > 65535 {
@@ -127,10 +148,66 @@ func readDeploymentFile(path string) (map[string]string, error) {
 		}
 		values[name] = value
 	}
-	if scanner.Err() != nil || len(values) != len(allowed) {
-		return nil, fmt.Errorf("incomplete RELAY_DEPLOYMENT_FILE; restore the deployment secrets volume")
+	if scanner.Err() != nil {
+		return nil, fmt.Errorf("cannot read RELAY_DEPLOYMENT_FILE; restore the deployment secrets volume")
 	}
 	return values, nil
+}
+
+// RemoveInitialPassword removes the disposable credential after its database
+// transaction commits. This is idempotent so startup can retry interrupted
+// cleanup. Errors are deliberately redacted; callers must not undo a successful
+// password change because file cleanup failed.
+func RemoveInitialPassword(deploymentFile, passwordFile string) error {
+	if passwordFile != "" {
+		if info, err := os.Lstat(passwordFile); err == nil {
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("refusing to remove a non-regular initial password file")
+			}
+			if err := os.Remove(passwordFile); err != nil {
+				return fmt.Errorf("cannot remove initial password file; check deployment file permissions")
+			}
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("cannot inspect initial password file")
+		}
+	}
+	if deploymentFile == "" {
+		return nil
+	}
+	info, err := os.Lstat(deploymentFile)
+	if err != nil || !info.Mode().IsRegular() {
+		return fmt.Errorf("cannot inspect deployment configuration for initial password cleanup")
+	}
+	values, err := readDeploymentFile(deploymentFile)
+	if err != nil {
+		return err
+	}
+	if _, exists := values["RELAY_INITIAL_PASSWORD"]; !exists {
+		return nil
+	}
+	file, err := os.CreateTemp(filepath.Dir(deploymentFile), ".deployment-cleanup-*")
+	if err != nil {
+		return fmt.Errorf("cannot clean initial password from deployment configuration; check directory permissions")
+	}
+	defer os.Remove(file.Name())
+	defer file.Close()
+	for _, name := range []string{"RELAY_DATABASE_URL", "RELAY_MIGRATION_DATABASE_URL", "RELAY_ENCRYPTION_KEY"} {
+		if value, ok := values[name]; ok {
+			if _, err := fmt.Fprintf(file, "%s=%s\n", name, value); err != nil {
+				return fmt.Errorf("cannot write cleaned deployment configuration")
+			}
+		}
+	}
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("cannot persist cleaned deployment configuration")
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("cannot close cleaned deployment configuration")
+	}
+	if err := os.Rename(file.Name(), deploymentFile); err != nil {
+		return fmt.Errorf("cannot replace deployment configuration during initial password cleanup")
+	}
+	return nil
 }
 
 func ValidateDatabaseURL(raw string) error {

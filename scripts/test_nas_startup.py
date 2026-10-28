@@ -58,21 +58,6 @@ printf called > "$RELAY_TEST_MARKER"
         return {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
                 for p in (self.secrets / 'current').iterdir() if p.is_file()}
 
-    def test_compose_embedded_entrypoint_matches_sources_and_runs(self):
-        compose = (ROOT / 'deploy/nas/docker-compose.yaml').read_text()
-        generated = compose.split('        # BEGIN GENERATED POSTGRES STARTUP\n')[1].split('        # END GENERATED POSTGRES STARTUP\n')[0]
-        script = '\n'.join((line[8:] if line else '').replace('$$', '$') for line in generated.splitlines()) + '\n'
-        roles = (ROOT / 'deploy/nas/init-db/001-roles.sh').read_text()
-        expected = "cat > /docker-entrypoint-initdb.d/001-roles.sh <<'RELAY_INIT_ROLES'\n" + roles + 'RELAY_INIT_ROLES\n' + SCRIPT.read_text()
-        self.assertEqual(script, expected)
-        init_dir = self.root / 'init'
-        init_dir.mkdir()
-        script = script.replace('/docker-entrypoint-initdb.d/001-roles.sh', str(init_dir / '001-roles.sh'))
-        result = subprocess.run(['sh', '-ec', script, 'relay-postgres', 'postgres'], env=self.env, capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual((init_dir / '001-roles.sh').read_text(), roles)
-        self.assertTrue(self.marker.exists())
-
     def test_fresh_install_generates_private_distinct_secrets_and_restart_reuses_them(self):
         result = self.run_start()
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -81,13 +66,16 @@ printf called > "$RELAY_TEST_MARKER"
         self.assertEqual(stat.S_IMODE(current.stat().st_mode), 0o710)
         values = []
         for name in NAMES:
-            path = current / name
+            path = self.secrets / 'initial/password' if name == 'RELAY_INITIAL_PASSWORD' else current / name
             value = path.read_text()
             self.assertRegex(value, r'^[0-9a-f]{64}$')
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
             self.assertNotIn(value, result.stdout + result.stderr)
             values.append(value)
         self.assertEqual(len(set(values)), len(NAMES))
+        self.assertNotIn('RELAY_INITIAL_PASSWORD', (current / 'deployment.env').read_text())
+        self.assertFalse((current / 'RELAY_INITIAL_PASSWORD').exists())
+        self.assertEqual(stat.S_IMODE((current / 'deployment.env').stat().st_mode), 0o640)
         original = self.snapshot()
         (self.data / 'PG_VERSION').write_text('18')
         result = self.run_start(RELAY_ENCRYPTION_KEY='ff'*32)
@@ -128,6 +116,37 @@ printf called > "$RELAY_TEST_MARKER"
             self.assertEqual((self.secrets / 'current' / name).read_text(), value)
         for value in values.values():
             self.assertNotIn(value, result.stdout + result.stderr)
+
+    def test_consumed_initial_credential_is_not_regenerated_on_restart(self):
+        self.assertEqual(self.run_start().returncode, 0)
+        (self.secrets / 'initial/password').unlink()
+        original = self.snapshot()
+        (self.data / 'PG_VERSION').write_text('18')
+        result = self.run_start(RELAY_INITIAL_PASSWORD='ff'*32)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(original, self.snapshot())
+        self.assertFalse((self.secrets / 'initial/password').exists())
+        self.assertNotIn('RELAY_INITIAL_PASSWORD', (self.secrets / 'current/deployment.env').read_text())
+
+    def test_legacy_initial_credential_moves_out_of_durable_configuration(self):
+        self.assertEqual(self.run_start().returncode, 0)
+        current = self.secrets / 'current'
+        initial = (self.secrets / 'initial/password').read_text()
+        durable = (current / 'deployment.env').read_bytes()
+        (current / 'RELAY_INITIAL_PASSWORD').write_text(initial)
+        (current / 'deployment.env').write_bytes(durable + ('RELAY_INITIAL_PASSWORD=' + initial + '\n').encode())
+        (self.secrets / 'initial/password').unlink()
+        result = self.run_start()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((current / 'deployment.env').read_bytes(), durable)
+        self.assertEqual((self.secrets / 'initial/password').read_text(), initial)
+        self.assertFalse((current / 'RELAY_INITIAL_PASSWORD').exists())
+        self.assertNotIn(initial, result.stdout + result.stderr)
+        # Simulate interruption after config replacement but before raw cleanup.
+        (current / 'RELAY_INITIAL_PASSWORD').write_text(initial)
+        result = self.run_start()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((current / 'RELAY_INITIAL_PASSWORD').exists())
 
     def test_invalid_manual_key_is_rejected_without_publishing_partial_secrets(self):
         result = self.run_start(RELAY_ENCRYPTION_KEY='do-not-expose-this-secret-value-at-all')

@@ -1,0 +1,17 @@
+# syntax=docker/dockerfile:1
+# Keep the user's PostgreSQL latest policy; package initialization in the image.
+FROM postgres:latest
+ARG VERSION=dev
+ARG REVISION=unknown
+ARG CREATED=unknown
+LABEL org.opencontainers.image.title="Relay Service PostgreSQL" \
+      org.opencontainers.image.source="https://github.com/DavisDing/Relay-Service" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${REVISION}" \
+      org.opencontainers.image.created="${CREATED}"
+COPY --chmod=0755 deploy/nas/start-postgres.sh /usr/local/bin/relay-postgres-entrypoint.sh
+COPY --chmod=0644 deploy/nas/init-db/001-roles.sh /docker-entrypoint-initdb.d/001-roles.sh
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=6 \
+  CMD pg_isready -h 127.0.0.1 -U postgres -d postgres || exit 1
+ENTRYPOINT ["/usr/local/bin/relay-postgres-entrypoint.sh"]
+CMD ["postgres"]

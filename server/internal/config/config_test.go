@@ -133,3 +133,85 @@ func TestStartupMigrationConnectionMustUseSameDatabaseAndOptions(t *testing.T) {
 		})
 	}
 }
+
+func TestPartialDeploymentSettingsAndConsumedInitialFile(t *testing.T) {
+	folder := t.TempDir()
+	path := filepath.Join(folder, "deployment.env")
+	passwordFile := filepath.Join(folder, "password")
+	database := "postgres://app:original-secret@postgres/relay"
+	key := strings.Repeat("ab", 32)
+	settings := map[string]string{"RELAY_DEPLOYMENT_FILE": path, "RELAY_DATABASE_URL": database, "RELAY_ENCRYPTION_KEY": key, "RELAY_INITIAL_PASSWORD_FILE": passwordFile}
+	get := func(k string) string { return settings[k] }
+	for _, contents := range []string{"RELAY_DATABASE_URL=" + database + "\n", "RELAY_ENCRYPTION_KEY=" + key + "\n", ""} {
+		if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+			t.Fatal(err)
+		}
+		c, err := LoadWith(get)
+		if err != nil || c.InitialPassword != "" {
+			t.Fatalf("partial config: %v", err)
+		}
+	}
+	durable := "RELAY_DATABASE_URL=" + database + "\nRELAY_ENCRYPTION_KEY=" + key + "\n"
+	if err := os.WriteFile(path, []byte(durable), 0600); err != nil {
+		t.Fatal(err)
+	}
+	initial := strings.Repeat("a", 64)
+	if err := os.WriteFile(passwordFile, []byte(initial), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := LoadWith(get); err != nil || c.InitialPassword != initial {
+		t.Fatalf("initial file load: %v", err)
+	}
+	if err := RemoveInitialPassword(path, passwordFile); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveInitialPassword(path, passwordFile); err != nil {
+		t.Fatal("cleanup not idempotent:", err)
+	}
+	if c, err := LoadWith(get); err != nil || c.InitialPassword != "" {
+		t.Fatalf("consumed file reload: %v", err)
+	}
+	if contents, _ := os.ReadFile(path); string(contents) != durable {
+		t.Fatal("cleanup changed durable config")
+	}
+	if err := os.WriteFile(path, []byte(durable+"RELAY_INITIAL_PASSWORD="+initial+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveInitialPassword(path, ""); err != nil {
+		t.Fatal(err)
+	}
+	if contents, _ := os.ReadFile(path); string(contents) != durable {
+		t.Fatal("legacy credential remains/durable config changed")
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0600 {
+		t.Fatal("cleaned config not private")
+	}
+	delete(settings, "RELAY_ENCRYPTION_KEY")
+	if err := os.WriteFile(path, []byte("RELAY_DATABASE_URL="+database+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadWith(get); err == nil {
+		t.Fatal("accepted missing effective encryption key")
+	}
+}
+
+func TestInitialCleanupRejectsLinksAndPreservesInvalidConfig(t *testing.T) {
+	folder := t.TempDir()
+	original := filepath.Join(folder, "original")
+	link := filepath.Join(folder, "password")
+	if err := os.WriteFile(original, []byte("preserve-this-content"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(original, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveInitialPassword("", link); err == nil {
+		t.Fatal("accepted symlink")
+	}
+	if err := RemoveInitialPassword(original, ""); err == nil || strings.Contains(err.Error(), "preserve-this-content") {
+		t.Fatal("invalid config accepted or disclosed")
+	}
+	if contents, _ := os.ReadFile(original); string(contents) != "preserve-this-content" {
+		t.Fatal("cleanup changed original")
+	}
+}

@@ -129,3 +129,24 @@ func TestConcurrentInitialPasswordCompletionHasOneWinner(t *testing.T) {
 		t.Fatalf("winners=%d", winners)
 	}
 }
+
+func TestInitialRestartErrorsPreserveCredential(t *testing.T) {
+	ctx := context.Background()
+	svc, store := newTestService(t)
+	defer store.Close()
+	initial := strings.Repeat("e", 64)
+	if _, err := svc.EnsureInitialAdministrator(ctx, initial); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		password string
+		want     error
+	}{{"", ErrInitialPasswordMissing}, {strings.Repeat("f", 64), ErrInitialPasswordMismatch}} {
+		if _, err := svc.EnsureInitialAdministrator(ctx, test.password); !errors.Is(err, test.want) || strings.Contains(err.Error(), initial) {
+			t.Fatalf("restart error: %v", err)
+		}
+	}
+	if _, err := svc.Login(ctx, "admin", initial); err != nil {
+		t.Fatal("original credential overwritten:", err)
+	}
+}

@@ -56,14 +56,19 @@ const (
 )
 
 type Service struct {
-	store          storage.Store
-	key            []byte
-	bootstrapToken []byte
-	secureCookies  bool
-	now            func() time.Time
-	random         io.Reader
-	mu             sync.Mutex
+	store                  storage.Store
+	key                    []byte
+	bootstrapToken         []byte
+	secureCookies          bool
+	now                    func() time.Time
+	random                 io.Reader
+	mu                     sync.Mutex
+	initialPasswordCleanup func()
 }
+
+// SetInitialPasswordCleanup is configured before serving requests. The callback
+// runs only after the permanent credential is committed, never inside its DB transaction.
+func (s *Service) SetInitialPasswordCleanup(cleanup func()) { s.initialPasswordCleanup = cleanup }
 
 // New creates an access service. The independent AES key must be 32 bytes. A blank
 // deployment bootstrap token disables first-run administrator creation.

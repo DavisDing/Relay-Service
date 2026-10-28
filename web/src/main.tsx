@@ -336,7 +336,6 @@ function App() {
       <p className="sub">服务状态，一处掌握</p>
       <form onSubmit={auth}>
         <h2>{authMode === 'bootstrap' ? '初始化管理员' : '管理员登录'}</h2>
-        {authMode === 'login' && <p>首次登录使用 admin，临时密码见 NAS 的 Relay 容器日志。</p>}
         {authMode === 'bootstrap' && (
           <label>部署初始化令牌<input name="token" type="password" autoComplete="off" required /></label>
         )}

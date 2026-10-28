@@ -1,0 +1,13 @@
+# Optional: merge only when joining an existing network; change its name as needed.
+services:
+  relay:
+    networks:
+      default:
+      ai-network:
+        aliases:
+          - relay-service
+
+networks:
+  ai-network:
+    external: true
+    name: ai-network
