@@ -1,6 +1,4 @@
-# Optional: copy only the settings you need into the corresponding service.
-# Or merge explicitly with: docker compose -f docker-compose.yaml -f docker-compose.settings.example.yaml up -d
-# .env alone does not inject variables into containers; this file wires the optional overrides.
+# Optional settings. Merge explicitly; .env alone does not inject environment.
 services:
   relay:
     image: ${RELAY_IMAGE:-ghcr.io/davisding/relay-service:latest}
@@ -8,14 +6,3 @@ services:
       RELAY_PUBLIC_URL: ${RELAY_PUBLIC_URL:-}
       RELAY_SECURE_COOKIES: ${RELAY_SECURE_COOKIES:-}
       RELAY_LOG_LEVEL: ${RELAY_LOG_LEVEL:-info}
-      RELAY_BOOTSTRAP_TOKEN: ${RELAY_BOOTSTRAP_TOKEN:-}
-  postgres:
-    image: ${RELAY_POSTGRES_IMAGE:-ghcr.io/davisding/relay-service-postgres:latest}
-    environment:
-      # First-install overrides or complete legacy-secret import only.
-      # Existing persisted secrets remain authoritative after initialization.
-      POSTGRES_SUPERUSER_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:-}
-      RELAY_DB_PASSWORD: ${RELAY_DB_PASSWORD:-}
-      RELAY_MIGRATOR_PASSWORD: ${RELAY_MIGRATOR_PASSWORD:-}
-      RELAY_APP_PASSWORD: ${RELAY_APP_PASSWORD:-}
-      RELAY_ENCRYPTION_KEY: ${RELAY_ENCRYPTION_KEY:-}

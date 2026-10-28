@@ -53,6 +53,14 @@ NAS Relay 服务端采用 Go；推荐模块化单体（API、静态 Web、采集
 
 未实现的容量保护、Retry-After 退避、模型/路由写入、账本/余额、正文、付费探针、镜像更新、客户端、灾备授权轮换等完整需求保持原目标；历史/审计保留清理已实现为管理员预览确认后的分批后台任务，但真实数据库、Docker 和 NAS 验收仍待执行。`contracts/IMPLEMENTATION.md` 记录当前合同，`COMPATIBILITY.md` 记录端点证据，`nas/DEPLOY.md` / `nas/VALIDATION.md` 记录部署与验收边界。下文未明确标为本轮实现的模块仍为目标方案。
 
+## 存储方案更新（D-19，2026-10-28）
+
+本节覆盖下文历史 PostgreSQL-only 默认部署描述。用户已确认默认 SQLite、PostgreSQL 可选，三种路径为 SQLite独立运行、SQLite后停机迁移、首装直接 PostgreSQL。默认仅 Relay 容器和 /data 卷；不扫描宿主寻找数据库，不按连接成败自动切换后端。
+
+SQLite 使用 modernc.org/sqlite v1.61.0（BSD-3-Clause，纯Go），复用 Store/Tx 接口，单连接/WAL/短事务，4MiB页面缓存目标；retention_at 索引与事务化序列保留；OS文件锁代替 PostgreSQL advisory lock 实现本机单实例。PG继续使用现有JSONB/版本迁移/独立业务与DDL账号。密钥和初始密码生成移入 Relay，数据卷始终持久化；密钥指纹校验防止现有数据被错误新密钥接管。
+
+迁移为显式维护命令 migrate-sqlite：锁定源，VACUUM INTO 私有备份；目标初始化后在持有调度/写锁的事务内复制全部记录和序列，核对数量、语义JSON/更新时间摘要，拒绝非空目标。事务内回执支持不确定提交重试，源退休与后端标记防止误启旧库；保留原文件/密钥，不做自动同步与回退。可选官方 PostgreSQL 初始化脚本只创建 relay 库/角色；LiteLLM 独立库。详见 [存储与迁移](nas/STORAGE.md)。
+
 ## 1. 目标、现状与差异
 
 ### 1.1 当前相关实现

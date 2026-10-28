@@ -14,13 +14,15 @@
 
 ## 2. 技术与环境
 
-- 已确认的技术方向：NAS Relay 服务端采用 Go（REQUIREMENT D-15，2026-10-26）。代码采用标准库 net/http、context、embed，PostgreSQL/pgx、Argon2id、AES-GCM；固定端点检查不发推理请求，监控凭据不回显。
-- 锁定依赖：`server/go.mod`/`go.sum`（Go 1.27，pgx/v5 5.11.0、x/crypto 0.58.0）；`web/package.json`/`pnpm-lock.yaml`（React 19.2.0、TypeScript 5.9.3、Vite 7.3.7）。Docker builder Node 22.23.4/Go 1.27.3、pnpm 11.25.0、CGO=0；根上下文的多阶段构建先生成页面再嵌入 Go，最终 scratch/非 root，包含 CA；本地生成页面在 `internal/webui/dist`。完整构建需 `-tags webassets`，Docker 已固定启用；纯 Go 默认构建不嵌入页面、UI 返回 503，可在无 Node/dist 的新检出运行后端检查。工具链需安装后按下面入口验证，不假设主机 PATH 已具备。
-- NAS 部署按 D-18 简化（2026-10-28）：默认 Compose 仅声明两个镜像、端口、卷与就绪依赖；初始化脚本及健康检查封装在镜像，使用 Compose 默认项目网络，无需 .env、宿主 IP 或提前生成令牌；默认映射 0.0.0.0:8787，public URL 可选，按 Host/协议验证 Origin，反代显式配置且不信任任意代理头。PostgreSQL 包装脚本自动生成并保存秘密到 relay-secrets，Relay 只读加载长期配置；临时密码独立文件在改密数据库提交后删除，失败告警并在重启时重试；配置中的临时明文引用在启动准备后清空；首次临时 admin 密码从部署日志获取，强制设置正式密码前业务 API 禁止访问，完成时所有临时会话失效。重建保留两卷；已有数据库缺失秘密拒绝重新生成，旧显式环境/账号保持兼容。默认无需 env；显式 environment 覆盖应用默认值，设置和既有网络示例需主动合并。PostgreSQL 配套镜像基于官方 postgres:latest，CI/Release 同批构建发布两个镜像，版本包固定两个 digest；本地/CI/镜像发布与 NAS 实测仍需分别取证。
-- 环境配置：`deploy/nas/` 提供应用/数据库 Dockerfile、精简 Compose 和可选设置/网络覆盖示例、`.env.example`、可选手工秘密生成脚本和全新独立库初始化脚本；不包含实际 `.env`/秘密。默认自动秘密流程不调用手工生成器。保留用户选择的 PostgreSQL latest，18+ 卷挂载 `/var/lib/postgresql`。按 REQUIREMENT D-16，当前自行测试的源码 Compose/模板默认 `ghcr.io/davisding/relay-service:latest`；CI 配置为本仓库 main 验证成功后发布双架构提交镜像，按 digest 完成 amd64 基础检查后更新 latest，PR/fork 不发包。稳定后才发布正式版；版本 Release 包继续绑定实际构建摘要，另有源码构建覆盖文件。已发布 v0.1.0-alpha.1 预发布及带摘要 NAS 包；测试渠道本次是否已更新须查对应工作流/registry，不以配置存在代替发布证据。发布与验证证据见 nas/VALIDATION.md；未通过数据库/UGOS 完整验收。历史 NAS 配置附件仍未归档。
+- 已确认的技术方向：NAS Relay 服务端采用 Go（REQUIREMENT D-15，2026-10-26）。代码采用标准库 net/http、context、embed，SQLite/modernc 与 PostgreSQL/pgx、Argon2id、AES-GCM；固定端点检查不发推理请求，监控凭据不回显。
+- 锁定依赖：`server/go.mod`/`go.sum`（Go 1.27，pgx/v5 5.11.0、modernc.org/sqlite 1.61.0、x/crypto 0.58.0）；`web/package.json`/`pnpm-lock.yaml`（React 19.2.0、TypeScript 5.9.3、Vite 7.3.7）。Docker builder Node 22.23.4/Go 1.27.3、pnpm 11.25.0、CGO=0；根上下文的多阶段构建先生成页面再嵌入 Go，最终 scratch/非 root，包含 CA；本地生成页面在 `internal/webui/dist`。完整构建需 `-tags webassets`，Docker 已固定启用；纯 Go 默认构建不嵌入页面、UI 返回 503，可在无 Node/dist 的新检出运行后端检查。工具链需安装后按下面入口验证，不假设主机 PATH 已具备。
+- NAS 存储按 D-19（2026-10-28）切换为默认 SQLite、可选 PostgreSQL：默认 Compose 只有 Relay 服务、8787端口和 relay-data:/data；SQLite 为纯 Go modernc.org/sqlite v1.61.0，无 CGO/额外常驻数据库。单连接/WAL/短事务，OS 文件锁限制同库单实例；默认不探测 PostgreSQL。不配置 URL 使用 SQLite，配置 URL 后连接失败报错；后端绑定及源迁移标记防止切换到空库或误用旧库。
+- 数据目录保存 SQLite、encryption.key、initial-password、锁/后端标记；Relay 自身生成并持久化秘密，临时密码仅部署日志显示，首次登录强制正式改密，提交后删除临时文件。已有数据缺失密钥/指纹不符拒绝启动，不自动重建。旧 deployment.env 支持显式路径兼容。
+- 三种用法：单独 SQLite；SQLite 后显式停机 migrate-sqlite 到 PostgreSQL；首装直连 PostgreSQL。迁移维护命令先一致性备份、锁源及目标、拒绝非空业务目标、逐条复制全部记录和序列、事务内核对数量及语义 JSON 摘要，提交回执后标记源退休；同一数据卷/密钥保留，失败/不确定提交按回执重试，不自动回退/双写。SQL 权限、真库/NAS 和镜像发布分别验证。
+- 可选 PostgreSQL 使用官方 postgres:latest，postgres.compose.yaml 是独立服务示例；init-db/001-roles.sh 供空实例首次初始化或管理员执行一次，创建 relay 独立库及 owner/migrator/app 角色，Relay 启动继续自动迁移表结构。LiteLLM 可共用实例但分库分账号。旧自定义 PostgreSQL 镜像脚本仅兼容历史资产，不再是默认部署或发布依赖。发布包格式3只固定 Relay 摘要并包含官方数据库示例及迁移指引。
 - 用户已补充 UGOS PRO 公开最新版本、Docker 部署、LiteLLM 最新版本/默认启动和权限/DB 未启用、M 系列 Mac/非 App Store 分发；此前 Compose/模型映射已经提供，Lucky 由用户自行配置。作为用户报告记录，不虚构版本号或在线验证结果；不再索要 NAS 工作目录/备份目标/Lucky 配置，见 REQUIREMENT 2.3/2.4。
 - 不存储真实密码、Key、管理令牌、账户个人信息或真实 NAS 数据。需要证据时使用脱敏配置、固定版本与验证记录。
-- 按 D-17，当前没有存量数据，按空库首次安装交付；默认 Compose 仅有 Relay 和 PostgreSQL，不定义独立迁移服务。Relay 启动先检查 schema ledger、必要表列及保留策略触发器/索引；空库或有待执行版本时，通过 `RELAY_MIGRATION_DATABASE_URL` 使用独立初始化账号执行 SQL，完成后关闭该连接池，再用无 DDL 权限业务账号复验并启动服务。结构完整则跳过初始化；未知版本、损坏/无账本旧结构或权限错误拒绝启动。Compose 直接 `up -d`，不需要手动建表文件；容器环境持有两类连接凭据，连接池关闭不等于移除环境中的初始化凭据。当前开发期首装基线直接修正 `002_retention_count_indexes.sql`，在 001 之后建立触发器维护的 `retention_at` 时间列及普通索引，不保留旧版 002/003 的升级、跳过或回填逻辑。JSON 为业务事实来源；后续实际有数据后的升级仍须遵守版本兼容与备份要求。真实数据库/容器运行及修复镜像发布须另行核实。
+- 按 D-17，当前没有存量数据，按空库首次安装交付；该决策时默认 Compose 为 Relay 和 PostgreSQL；现按 D-19 改为默认单 Relay/SQLite，可选 PostgreSQL，不定义常驻迁移服务。Relay 启动先检查 schema ledger、必要表列及保留策略触发器/索引；空库或有待执行版本时，通过 `RELAY_MIGRATION_DATABASE_URL` 使用独立初始化账号执行 SQL，完成后关闭该连接池，再用无 DDL 权限业务账号复验并启动服务。结构完整则跳过初始化；未知版本、损坏/无账本旧结构或权限错误拒绝启动。Compose 直接 `up -d`，不需要手动建表文件；容器环境持有两类连接凭据，连接池关闭不等于移除环境中的初始化凭据。当前开发期首装基线直接修正 `002_retention_count_indexes.sql`，在 001 之后建立触发器维护的 `retention_at` 时间列及普通索引，不保留旧版 002/003 的升级、跳过或回填逻辑。JSON 为业务事实来源；后续实际有数据后的升级仍须遵守版本兼容与备份要求。真实数据库/容器运行及修复镜像发布须另行核实。
 
 ## 3. 代码与文档导航
 
@@ -41,7 +43,7 @@
 | `.github/`、`scripts/`、`docs/nas/RELEASE.md` | CI、GHCR/Release 工作流、摘要部署包、离线打包测试与无数据库容器检查 |
 | `.gitignore` | 忽略实际 env/秘密、node_modules 和临时构建产物；保留环境模板 |
 
-模块按实际职责组织为 access、monitor、storage、config、api、webui；没有原生客户端入口。PostgreSQL 初版使用 bucket/key JSONB 记录与普通计数表，业务跨记录一致性在短事务写锁内实现，不代表设计中全部关系模型/SQL 约束已落地。
+模块按实际职责组织为 access、monitor、storage、config、api、webui；没有原生客户端入口。持久化存储复用 bucket/key 记录接口；SQLite 使用 JSON 文本，PostgreSQL 使用 JSONB 记录与普通计数表，业务跨记录一致性在短事务写锁内实现，不代表设计中全部关系模型/SQL 约束已落地。
 
 ## 4. 运行与验证
 
@@ -63,7 +65,7 @@
 | Web 安装/构建 | `web/`：`pnpm install --frozen-lockfile`、`pnpm build` | 输出嵌入 server/internal/webui/dist；安装脚本精确允许 esbuild 版本 |
 | Web 会话竞态回归 | `web/`：`pnpm test` | 用现有 TypeScript/React/Node 测试真实 API 会话隔离、组件静态渲染与 CSS 类名合同，不代替浏览器布局和交互验收 |
 | 显式迁移/启动 | `server/`：`go run ./cmd/relay migrate`、`go run -tags webassets ./cmd/relay` | 普通启动支持独立初始化连接；migrate 保留作维护入口，需真实配置；本轮未执行 |
-| Compose 入口 | `deploy/nas/`：`docker compose -f docker-compose.yaml config --quiet`，部署见 nas/DEPLOY.md | 默认两服务，Relay 启动时按需自动建表；本地 Docker、数据库与 UGOS 尚未验证 |
+| Compose 入口 | `deploy/nas/`：`docker compose -f docker-compose.yaml config --quiet`，部署见 nas/DEPLOY.md | 默认单 Relay/SQLite，可选 PostgreSQL 时启动按需建表；本地 Docker、数据库与 UGOS 尚未验证 |
 | 发布工具检查 | 根目录：`python3 -m unittest discover -s scripts -p 'test_*.py'`、`python3 -m unittest discover -s .github/scripts -p 'test_*.py'` | 离线包/标签合同，不触发发布 |
 | 容器基础检查 | 根目录：`sh scripts/container-smoke.sh --build` | 需现成 Docker CLI/daemon；不启动 PostgreSQL；不可用返回 77 |
 | ARM64 二进制静态检查 | 根目录：`python3 scripts/check-oci-architecture.py <OCI导出tar> arm64` | CI 导出镜像后核对 config 与实际 ELF 架构；不运行 ARM64 程序，不代表设备验收 |

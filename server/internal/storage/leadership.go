@@ -12,7 +12,12 @@ import (
 // this database; operators must still isolate independently restored databases.
 type Leadership struct{ connection *pgxpool.Conn }
 
-func (p *Postgres) AcquireLeadership(ctx context.Context) (*Leadership, error) {
+type Leader interface {
+	Watch(context.Context) error
+	Close()
+}
+
+func (p *Postgres) AcquireLeadership(ctx context.Context) (Leader, error) {
 	conn, err := p.pool.Acquire(ctx)
 	if err != nil {
 		return nil, err

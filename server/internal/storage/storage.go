@@ -51,3 +51,10 @@ type Store interface {
 	Ping(context.Context) error
 	Close()
 }
+
+// Database is a persistent store with exclusive scheduler ownership.
+type Database interface {
+	Store
+	DataVersion(context.Context) (uint64, error)
+	AcquireLeadership(context.Context) (Leader, error)
+}

@@ -63,7 +63,7 @@ config = images[0]["Config"]
 user = config.get("User", "")
 assert user and user.split(":", 1)[0] not in ("0", "root"), "image must default to a non-root user"
 assert config.get("Entrypoint") == ["/relay"], "image entrypoint must be /relay"
-assert "RELAY_DEPLOYMENT_FILE=/relay-secrets/current/deployment.env" in config.get("Env", []), "missing default deployment configuration path"
+assert "RELAY_DATA_DIR=/data" in config.get("Env", []), "missing default persistent data directory"
 assert config.get("Healthcheck", {}).get("Test") == ["CMD", "/relay", "healthcheck"], "missing image health check"
 assert images[0].get("Os") == "linux", "runtime image must target Linux"
 labels = config.get("Labels") or {}

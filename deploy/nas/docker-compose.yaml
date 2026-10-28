@@ -7,18 +7,7 @@ services:
     ports:
       - "8787:8787"
     volumes:
-      - relay-secrets:/relay-secrets
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  postgres:
-    image: ghcr.io/davisding/relay-service-postgres:latest
-    restart: unless-stopped
-    volumes:
-      - relay-postgres:/var/lib/postgresql
-      - relay-secrets:/relay-secrets
+      - relay-data:/data
 
 volumes:
-  relay-postgres:
-  relay-secrets:
+  relay-data:

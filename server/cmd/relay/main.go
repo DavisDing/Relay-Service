@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -48,9 +49,15 @@ func main() {
 			}
 			fmt.Println("Relay schema migrations applied")
 			return
+		case "migrate-sqlite":
+			if err := migrateSQLite(os.Args[2:]); err != nil {
+				slog.Error("SQLite transfer failed", "error", err)
+				os.Exit(1)
+			}
+			return
 		case "run":
 		default:
-			fmt.Fprintln(os.Stderr, "usage: relay [run|migrate|healthcheck|version]")
+			fmt.Fprintln(os.Stderr, "usage: relay [run|migrate|migrate-sqlite|healthcheck|version]")
 			os.Exit(2)
 		}
 	}
@@ -89,31 +96,72 @@ func run() error {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level(cfg.LogLevel)})))
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
+	if err := os.MkdirAll(cfg.DataDir, 0700); err != nil {
+		return err
+	}
+	localLock, err := storage.LockFile(filepath.Join(cfg.DataDir, "instance.lock"))
+	if err != nil {
+		return err
+	}
+	defer localLock.Close()
+	if _, err := os.Lstat(filepath.Join(cfg.DataDir, "migration.pending")); err == nil {
+		return fmt.Errorf("an offline SQLite migration is pending; rerun migrate-sqlite to verify and finish before startup")
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := checkTargetPin(&cfg); err != nil {
+		return err
+	}
+	allowLegacyKey := len(cfg.EncryptionKey) == 32
+	_, err = prepareLocalKey(&cfg)
+	if err != nil {
+		return err
+	}
 	connectCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	db, err := storage.OpenPostgres(connectCtx, cfg.DatabaseURL, 8)
+	var db storage.Database
+	if cfg.DatabaseURL == "" {
+		db, err = storage.OpenSQLite(connectCtx, cfg.SQLitePath)
+	} else {
+		db, err = storage.OpenPostgres(connectCtx, cfg.DatabaseURL, 8)
+	}
 	if err != nil {
 		return fmt.Errorf("connect Relay database: %w", err)
 	}
 	defer db.Close()
-	if err := prepareSchema(connectCtx, db, cfg.MigrationDatabaseURL, func(ctx context.Context, databaseURL string) (schemaMigrator, error) {
-		return storage.OpenPostgres(ctx, databaseURL, 2)
-	}); err != nil {
-		return err
+	if cfg.DatabaseURL != "" {
+		if err := prepareSchema(connectCtx, db, cfg.MigrationDatabaseURL, func(ctx context.Context, databaseURL string) (schemaMigrator, error) {
+			return storage.OpenPostgres(ctx, databaseURL, 2)
+		}); err != nil {
+			return err
+		}
 	}
 	leader, err := db.AcquireLeadership(connectCtx)
 	if err != nil {
 		return fmt.Errorf("acquire scheduler leadership: %w", err)
 	}
 	defer leader.Close()
+	if cfg.DatabaseURL != "" {
+		if err := guardSQLiteCutover(connectCtx, &cfg, db); err != nil {
+			return err
+		}
+	}
 	if err := db.Ping(connectCtx); err != nil {
 		return fmt.Errorf("verify Relay schema before serving: %w", err)
 	}
-	if cfg.BootstrapToken == "" && cfg.InitialPassword == "" {
-		slog.Warn("administrator bootstrap is disabled")
+	if err := bindEncryptionKey(connectCtx, db, cfg.EncryptionKey, allowLegacyKey); err != nil {
+		return err
+	}
+	if cfg.DatabaseURL != "" {
+		if err := pinTarget(&cfg); err != nil {
+			return err
+		}
 	}
 	accessSvc, err := access.New(db, cfg.EncryptionKey, cfg.BootstrapToken, cfg.SecureCookies)
 	if err != nil {
+		return err
+	}
+	if err := prepareLocalInitial(connectCtx, &cfg, accessSvc); err != nil {
 		return err
 	}
 	if err := prepareInitialAdministrator(connectCtx, accessSvc, &cfg, os.Stderr); err != nil {

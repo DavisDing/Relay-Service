@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// Memory is a transactional test/development store. Production uses PostgreSQL.
+// Memory is a transactional test/development store. Deployments use SQLite or PostgreSQL.
 type Memory struct {
 	mu        sync.RWMutex
 	buckets   map[string]map[string]json.RawMessage

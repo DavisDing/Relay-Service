@@ -1,12 +1,7 @@
-# Source checkout only. Build both matching images before starting the project.
+# Build only Relay. SQLite is embedded; PostgreSQL is optional and external.
 services:
   relay:
     image: relay-service:local
     build:
       context: ../..
       dockerfile: deploy/nas/Dockerfile
-  postgres:
-    image: relay-service-postgres:local
-    build:
-      context: ../..
-      dockerfile: deploy/nas/Dockerfile.postgres

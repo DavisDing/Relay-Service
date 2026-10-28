@@ -20,6 +20,7 @@ ARG REVISION=unknown
 ARG CREATED=unknown
 WORKDIR /src/server
 RUN apk add --no-cache ca-certificates
+RUN mkdir -p /out/data && chmod 700 /out/data
 COPY server/go.mod server/go.sum ./
 RUN go mod download && go mod verify
 COPY server/ ./
@@ -41,8 +42,8 @@ LABEL org.opencontainers.image.title="Relay Service" \
       org.opencontainers.image.created="${CREATED}"
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build --chown=65532:65532 /out/relay /relay
-ENV RELAY_DEPLOYMENT_FILE=/relay-secrets/current/deployment.env \
-    RELAY_INITIAL_PASSWORD_FILE=/relay-secrets/initial/password
+COPY --from=build --chown=65532:65532 /out/data /data
+ENV RELAY_DATA_DIR=/data
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD ["/relay", "healthcheck"]
 EXPOSE 8787

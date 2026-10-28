@@ -1,0 +1,7 @@
+# Connect to a prepared PostgreSQL database. No database container is added.
+# Merge with the main file; both services must share a Docker network.
+services:
+  relay:
+    environment:
+      RELAY_DATABASE_URL: ${RELAY_DATABASE_URL:?set Relay business connection}
+      RELAY_MIGRATION_DATABASE_URL: ${RELAY_MIGRATION_DATABASE_URL:?set Relay schema connection}

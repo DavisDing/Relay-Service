@@ -62,7 +62,6 @@ jobs:
       RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
       RELEASE_COMMIT: ${{ needs.resolve.outputs.commit }}
       RELEASE_IMAGE: ${{ needs.resolve.outputs.image }}
-      RELEASE_POSTGRES_IMAGE: ghcr.io/davisding/relay-service-postgres
       RELEASE_PRERELEASE: ${{ needs.resolve.outputs.prerelease }}
       DOCKER_BUILD_SUMMARY: "false"
       DOCKER_BUILD_RECORD_UPLOAD: "false"
@@ -106,12 +105,10 @@ jobs:
               image = metadata.get('image', '')
               if not re.fullmatch(re.escape(os.environ['RELEASE_IMAGE']) + r'@sha256:[0-9a-f]{64}', image):
                   raise SystemExit("Existing draft image identity is incompatible; inspect it before retrying")
-              postgres_image = metadata.get('postgres_image', '')
-              if not re.fullmatch(re.escape(os.environ['RELEASE_POSTGRES_IMAGE']) + r'@sha256:[0-9a-f]{64}', postgres_image):
-                  raise SystemExit("Existing draft companion identity is incompatible; inspect it before retrying")
+              if metadata.get('format_version') != 3 or metadata.get('default_storage') != 'sqlite':
+                  raise SystemExit('Draft metadata does not describe the SQLite deployment format')
               with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
-                  output.write(f"image={image}\npostgres_image={postgres_image}\n")
-          PY
+                  output.write(f"image={image}\n")
       - name: Recheck the remote tag before publishing packages
         run: python3 .github/scripts/check_release_tag.py
       - name: Set up Docker Buildx
@@ -140,52 +137,26 @@ jobs:
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ needs.resolve.outputs.commit }}
             org.opencontainers.image.version=${{ needs.resolve.outputs.tag }}
-      - name: Build and publish the matching PostgreSQL companion
-        id: postgres
-        if: steps.existing.outputs.image == ''
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: deploy/nas/Dockerfile.postgres
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ghcr.io/davisding/relay-service-postgres:${{ needs.resolve.outputs.tag }}
-          build-args: |
-            VERSION=${{ needs.resolve.outputs.tag }}
-            REVISION=${{ needs.resolve.outputs.commit }}
-            CREATED=${{ needs.resolve.outputs.created }}
       - name: Select the published digest or matching draft digest
         id: published
         env:
           EXISTING_IMAGE: ${{ steps.existing.outputs.image }}
           BUILT_DIGEST: ${{ steps.image.outputs.digest }}
-          EXISTING_POSTGRES_IMAGE: ${{ steps.existing.outputs.postgres_image }}
-          BUILT_POSTGRES_DIGEST: ${{ steps.postgres.outputs.digest }}
         run: |
           image="$EXISTING_IMAGE"
           if [ -z "$image" ]; then image="${RELEASE_IMAGE}@${BUILT_DIGEST}"; fi
           echo "image=$image" >> "$GITHUB_OUTPUT"
-          postgres_image="$EXISTING_POSTGRES_IMAGE"
-          if [ -z "$postgres_image" ]; then postgres_image="${RELEASE_POSTGRES_IMAGE}@${BUILT_POSTGRES_DIGEST}"; fi
-          echo "postgres_image=$postgres_image" >> "$GITHUB_OUTPUT"
       - name: Check the published Linux amd64 digest without a database
         env:
           PUBLISHED_IMAGE: ${{ steps.published.outputs.image }}
         run: |
           docker pull --platform linux/amd64 "$PUBLISHED_IMAGE"
           sh scripts/container-smoke.sh "$PUBLISHED_IMAGE" "$RELEASE_TAG" "$RELEASE_COMMIT"
-      - name: Check the companion digest without starting a database
-        env:
-          PUBLISHED_POSTGRES_IMAGE: ${{ steps.published.outputs.postgres_image }}
-        run: |
-          docker pull --platform linux/amd64 "$PUBLISHED_POSTGRES_IMAGE"
-          sh scripts/postgres-image-smoke.sh "$PUBLISHED_POSTGRES_IMAGE" "$RELEASE_TAG" "$RELEASE_COMMIT"
       - name: Package NAS assets with the published image digest
         env:
-          PUBLISHED_POSTGRES_IMAGE: ${{ steps.published.outputs.postgres_image }}
           PUBLISHED_IMAGE: ${{ steps.published.outputs.image }}
         run: |
-          sh scripts/package-release.sh "$RELEASE_TAG" "$PUBLISHED_IMAGE" "$PUBLISHED_POSTGRES_IMAGE" dist/release
+          sh scripts/package-release.sh "$RELEASE_TAG" "$PUBLISHED_IMAGE" dist/release
           (cd dist/release && sha256sum -c SHA256SUMS)
       - name: Recheck the tag and compare existing draft assets
         env:
@@ -223,14 +194,12 @@ jobs:
             --prerelease="$RELEASE_PRERELEASE" --draft=false
       - name: Record published artifacts and acceptance limits
         env:
-          PUBLISHED_POSTGRES_IMAGE: ${{ steps.published.outputs.postgres_image }}
           PUBLISHED_IMAGE: ${{ steps.published.outputs.image }}
         run: |
           {
             echo "### Published ${RELEASE_TAG}"
             echo "- Commit: ${RELEASE_COMMIT}"
             echo "- Image: ${PUBLISHED_IMAGE}"
-            echo "- PostgreSQL companion: ${PUBLISHED_POSTGRES_IMAGE}"
             echo '- amd64 passed container checks without a database; arm64 passed build and static ELF checks only.'
             echo '- PostgreSQL, NAS/UGOS import, upstream services and devices were not accepted by this workflow.'
           } >> "$GITHUB_STEP_SUMMARY"

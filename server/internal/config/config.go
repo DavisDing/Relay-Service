@@ -17,6 +17,8 @@ type Config struct {
 	ListenAddr           string
 	PublicURL            string
 	DatabaseURL          string
+	DataDir              string
+	SQLitePath           string
 	MigrationDatabaseURL string
 	EncryptionKey        []byte
 	BootstrapToken       string
@@ -59,6 +61,11 @@ func LoadWith(getenv func(string) string) (Config, error) {
 		return value
 	}
 	c := Config{ListenAddr: get("RELAY_LISTEN_ADDR", ":8787"), PublicURL: get("RELAY_PUBLIC_URL", ""), DatabaseURL: getenv("RELAY_DATABASE_URL"), BootstrapToken: getenv("RELAY_BOOTSTRAP_TOKEN"), InitialPassword: getenv("RELAY_INITIAL_PASSWORD"), LogLevel: get("RELAY_LOG_LEVEL", "info")}
+	c.DataDir = get("RELAY_DATA_DIR", "./data")
+	c.SQLitePath = get("RELAY_SQLITE_PATH", filepath.Join(c.DataDir, "relay.sqlite"))
+	if initialPasswordFile == "" && deploymentFile == "" {
+		initialPasswordFile = filepath.Join(c.DataDir, "initial-password")
+	}
 	c.DeploymentFile, c.InitialPasswordFile = deploymentFile, initialPasswordFile
 	if c.InitialPassword == "" && initialPasswordFile != "" {
 		info, err := os.Lstat(initialPasswordFile)
@@ -100,17 +107,22 @@ func LoadWith(getenv func(string) string) (Config, error) {
 	if c.PublicURL != "" && c.SecureCookies != publicHTTPS {
 		return c, fmt.Errorf("RELAY_SECURE_COOKIES must match the public URL scheme")
 	}
-	if err := ValidateDatabaseURL(c.DatabaseURL); err != nil {
-		return c, err
+	if c.DatabaseURL != "" {
+		if err := ValidateDatabaseURL(c.DatabaseURL); err != nil {
+			return c, err
+		}
 	}
 	c.MigrationDatabaseURL = getenv("RELAY_MIGRATION_DATABASE_URL")
 	if c.MigrationDatabaseURL != "" {
+		if c.DatabaseURL == "" {
+			return c, fmt.Errorf("RELAY_MIGRATION_DATABASE_URL requires RELAY_DATABASE_URL")
+		}
 		if err := validateMigrationDatabaseURL(c.DatabaseURL, c.MigrationDatabaseURL); err != nil {
 			return c, err
 		}
 	}
 	key, err := hex.DecodeString(getenv("RELAY_ENCRYPTION_KEY"))
-	if err != nil || len(key) != 32 {
+	if err != nil || (len(key) != 32 && (getenv("RELAY_ENCRYPTION_KEY") != "" || deploymentFile != "")) {
 		return c, fmt.Errorf("RELAY_ENCRYPTION_KEY must contain 64 hexadecimal characters")
 	}
 	if strings.Trim(c.BootstrapToken, " ") == "" {

@@ -1,3 +1,5 @@
+> 2026-10-28 D-19 更新：默认存储已改为 SQLite，PostgreSQL 可选。下文较早 PostgreSQL-only/双镜像部署描述由 [存储与迁移](../docs/nas/STORAGE.md) 覆盖。业务 Store/Tx、API及数据所有权不变；SQLite与PG行为、迁移与NAS验收分别记录。
+
 # NAS M1 实现合同
 
 日期：2026-10-26。模块 `relayservice`，Go代码在 `server/`，管理页面在 `web/`，编译后嵌入 `server/internal/webui/dist`。本合同描述当前基础监控切片；不代表完整首期、真实数据库或六服务兼容验收。证据见 `docs/nas/VALIDATION.md`、`docs/COMPATIBILITY.md`。

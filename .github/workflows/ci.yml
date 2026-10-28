@@ -35,7 +35,6 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       IMAGE: ghcr.io/davisding/relay-service
-      POSTGRES_IMAGE: ghcr.io/davisding/relay-service-postgres
       IMAGE_VERSION: dev-${{ github.sha }}
       DOCKER_BUILD_SUMMARY: "false"
       DOCKER_BUILD_RECORD_UPLOAD: "false"
@@ -80,34 +79,14 @@ jobs:
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ env.IMAGE_VERSION }}
-      - name: Publish the matching PostgreSQL companion
-        id: postgres
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: deploy/nas/Dockerfile.postgres
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ghcr.io/davisding/relay-service-postgres:sha-${{ github.sha }}
-          build-args: |
-            VERSION=${{ env.IMAGE_VERSION }}
-            REVISION=${{ github.sha }}
-            CREATED=${{ steps.source.outputs.created }}
-      - name: Check the published PostgreSQL companion without starting a database
-        env:
-          POSTGRES_DIGEST: ${{ steps.postgres.outputs.digest }}
-        run: |
-          docker pull --platform linux/amd64 "$POSTGRES_IMAGE@$POSTGRES_DIGEST"
-          sh scripts/postgres-image-smoke.sh "$POSTGRES_IMAGE@$POSTGRES_DIGEST" "$IMAGE_VERSION" "$GITHUB_SHA"
       - name: Check the published amd64 digest without a database
         env:
           PUBLISHED_DIGEST: ${{ steps.image.outputs.digest }}
         run: |
           docker pull --platform linux/amd64 "$IMAGE@$PUBLISHED_DIGEST"
           sh scripts/container-smoke.sh "$IMAGE@$PUBLISHED_DIGEST" "$IMAGE_VERSION" "$GITHUB_SHA"
-      - name: Promote both checked digests to latest
+      - name: Promote the checked digest to latest
         env:
-          POSTGRES_DIGEST: ${{ steps.postgres.outputs.digest }}
           PUBLISHED_DIGEST: ${{ steps.image.outputs.digest }}
         run: |
           current=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
@@ -116,15 +95,12 @@ jobs:
             exit 1
           }
           docker buildx imagetools create --tag "$IMAGE:latest" "$IMAGE@$PUBLISHED_DIGEST"
-          docker buildx imagetools create --tag "$POSTGRES_IMAGE:latest" "$POSTGRES_IMAGE@$POSTGRES_DIGEST"
           docker buildx imagetools inspect "$IMAGE:latest"
-          docker buildx imagetools inspect "$POSTGRES_IMAGE:latest"
           {
             echo '### Self-testing image published'
             echo "- Pull: docker pull $IMAGE:latest"
             echo "- Commit: $GITHUB_SHA"
             echo "- Checked image: $IMAGE@$PUBLISHED_DIGEST"
-            echo "- PostgreSQL companion: $POSTGRES_IMAGE@$POSTGRES_DIGEST"
             echo '- latest follows verified main for self-testing; no stable GitHub Release was created.'
             echo '- amd64 passed checks without a database; arm64 passed build and static ELF checks only. NAS acceptance remains separate.'
           } >> "$GITHUB_STEP_SUMMARY"
