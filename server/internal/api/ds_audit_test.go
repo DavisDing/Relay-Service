@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"relayservice/internal/monitor"
 	"relayservice/internal/storage"
@@ -53,7 +54,13 @@ func TestServiceNamesAndGroupsRejectControlCharactersBeforePersistence(t *testin
 func TestAlertsHTTPHasMoreAndCursorAtExactPageBoundary(t *testing.T) {
 	f := newFixture(t)
 	if err := f.store.Update(context.Background(), func(tx storage.Tx) error {
-		return tx.Put("monitor.alerts", fmt.Sprintf("%020d", 2), monitor.Alert{ID: "2", Cursor: 2})
+		// Alert reads also resolve check evidence and service silence state, so
+		// seed the same identity fields as an alert emitted by the monitor.
+		return tx.Put("monitor.alerts", fmt.Sprintf("%020d", 2), monitor.Alert{
+			ID: "2", Cursor: 2, ServiceID: "service-1", CheckID: "check-1",
+			Generation: 1, IncidentID: "incident-1", Kind: "failure", Severity: "error",
+			Message: "Target connection failed", StartedAt: time.Now().UTC(), Count: 1,
+		})
 	}); err != nil {
 		t.Fatal(err)
 	}
