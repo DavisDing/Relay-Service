@@ -330,7 +330,7 @@ func (s *Server) routes() {
 		if err != nil {
 			return nil, 0, err
 		}
-		items, err := q.s.monitor.Alerts(q.r.Context(), q.r.URL.Query().Get("cursor"), limit)
+		items, hasMore, err := q.s.monitor.AlertsPage(q.r.Context(), q.r.URL.Query().Get("cursor"), limit)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -340,7 +340,7 @@ func (s *Server) routes() {
 		if len(items) > 0 {
 			next = strconv.FormatUint(items[len(items)-1].Cursor, 10)
 		}
-		return map[string]any{"items": items, "ack_cursor": ack, "next_cursor": next, "has_more": len(items) == limit}, http.StatusOK, err
+		return map[string]any{"items": items, "ack_cursor": ack, "next_cursor": next, "has_more": hasMore}, http.StatusOK, err
 	}})
 	s.handle("POST /api/v1/alerts/ack", route{write: true, fn: func(q request) (any, int, error) {
 		var p ackPayload

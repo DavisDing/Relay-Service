@@ -236,25 +236,23 @@ func (w *networkWorker) applyStream(kind string, body []byte, now time.Time) err
 		default:
 			level = "info"
 		}
-		raw := frame.Payload + frame.Message
-		message := "核心日志事件（正文已脱敏）。"
+		raw := frame.Payload
+		if raw == "" {
+			raw = frame.Message
+		}
 		class := "core"
 		lower := strings.ToLower(raw)
 		switch {
 		case strings.Contains(lower, "timeout") || strings.Contains(lower, "timed out"):
 			class = "timeout"
-			message = "核心报告连接超时。"
 		case strings.Contains(lower, "connection refused"):
 			class = "connection_refused"
-			message = "核心报告目标拒绝连接。"
 		case strings.Contains(lower, "dns"):
 			class = "dns"
-			message = "核心产生DNS相关日志。"
 		case strings.Contains(lower, "error") || level == "error":
 			class = "error"
-			message = "核心报告连接或运行错误。"
 		}
-		w.appendNetworkLog(now, level, class, message)
+		w.appendNetworkLog(now, level, class, sanitizeNetworkLog(raw, w.sensitive))
 		w.logState = "available"
 	}
 	if w.sourceUpdated == nil {
@@ -311,8 +309,30 @@ func networkSequence(n uint64) string { return sequenceKey(n) }
 func (w *networkWorker) applyInventory(providerBody []byte, providerErr error, proxyBody []byte, proxyErr error, token string, now time.Time) {
 	subs := []NetworkSubscription{}
 	nodes := []NetworkNode{}
-	seen := map[string]bool{}
-	names := map[string]bool{}
+	// /proxies keys are unique within this core. Providers describe membership,
+	// never a second identity or an alternative source of current health.
+	byName := map[string]int{}
+	if proxyErr == nil {
+		var input struct {
+			Proxies map[string]mihomoRawProxy `json:"proxies"`
+		}
+		if json.Unmarshal(proxyBody, &input) != nil || input.Proxies == nil {
+			proxyErr = ErrValidation
+		} else {
+			for _, name := range mihomoSortedKeys(input.Proxies) {
+				raw := input.Proxies[name]
+				raw.Name = name
+				if n, ok := networkProjectNode(raw, "", token, now); ok {
+					if len(nodes) >= networkItemLimit {
+						w.view.Coverage.Truncated = true
+						break
+					}
+					byName[name] = len(nodes)
+					nodes = append(nodes, n)
+				}
+			}
+		}
+	}
 	if providerErr == nil {
 		var input struct {
 			Providers map[string]mihomoRawProvider `json:"providers"`
@@ -320,9 +340,8 @@ func (w *networkWorker) applyInventory(providerBody []byte, providerErr error, p
 		if json.Unmarshal(providerBody, &input) != nil || input.Providers == nil {
 			providerErr = ErrValidation
 		} else {
-			keys := mihomoSortedKeys(input.Providers)
-			for _, name := range keys {
-				if !networkLabel(name) || networkReflected(name, token) {
+			for _, name := range mihomoSortedKeys(input.Providers) {
+				if !networkLabel(name) || networkReflected(name, token) || w.networkSensitive(name) {
 					continue
 				}
 				p := input.Providers[name]
@@ -331,22 +350,21 @@ func (w *networkWorker) applyInventory(providerBody []byte, providerErr error, p
 				if err != nil {
 					continue
 				}
-				sub := NetworkSubscription{ID: id, Name: name, Source: "provider", Active: true, UploadBytes: projected.UploadBytes, DownloadBytes: projected.DownloadBytes, TotalBytes: projected.TotalBytes, ExpireSeconds: projected.ExpireSeconds, UsedBytes: projected.UsedBytes, RemainingBytes: projected.RemainingBytes, UpdatedAt: projected.UpdatedAt, UsageState: projected.UsageState}
-				sub.NodeCountKnown = true
+				sub := NetworkSubscription{ID: id, Name: name, Source: "provider", Active: true, UploadBytes: projected.UploadBytes, DownloadBytes: projected.DownloadBytes, TotalBytes: projected.TotalBytes, ExpireSeconds: projected.ExpireSeconds, UsedBytes: projected.UsedBytes, RemainingBytes: projected.RemainingBytes, UpdatedAt: projected.UpdatedAt, UsageState: projected.UsageState, NodeCountKnown: true}
+				seen := map[string]bool{}
 				for _, raw := range p.Proxies {
-					if len(nodes) >= networkItemLimit {
+					if _, ok := networkProjectNode(raw, "", token, now); !ok || seen[raw.Name] {
+						continue
+					}
+					if len(seen) >= networkItemLimit {
 						sub.NodeCountKnown = false
 						w.view.Coverage.Truncated = true
 						break
 					}
-					if n, ok := networkProjectNode(raw, id, token, now); ok {
-						if seen[n.ID] {
-							continue
-						}
-						seen[n.ID] = true
-						names[n.Name] = true
-						nodes = append(nodes, n)
-						sub.NodeCount++
+					seen[raw.Name] = true
+					sub.NodeCount++
+					if i, ok := byName[raw.Name]; ok && strings.EqualFold(nodes[i].Type, raw.Type) {
+						nodes[i].Subscriptions = append(nodes[i].Subscriptions, NetworkNodeSubscription{ID: id, Name: name})
 					}
 				}
 				subs = append(subs, sub)
@@ -361,42 +379,17 @@ func (w *networkWorker) applyInventory(providerBody []byte, providerErr error, p
 	if providerErr != nil {
 		w.view.Coverage.SourceStates["providers"] = "unavailable"
 	}
-	if proxyErr == nil {
-		var input struct {
-			Proxies map[string]mihomoRawProxy `json:"proxies"`
-		}
-		if json.Unmarshal(proxyBody, &input) != nil || input.Proxies == nil {
-			proxyErr = ErrValidation
-		} else {
-			for _, name := range mihomoSortedKeys(input.Proxies) {
-				raw := input.Proxies[name]
-				if raw.Name == "" {
-					raw.Name = name
-				}
-				if raw.Provider == "" && names[raw.Name] {
-					continue
-				}
-				provider := ""
-				if raw.Provider != "" {
-					provider = networkID("provider", raw.Provider)
-				}
-				if n, ok := networkProjectNode(raw, provider, token, now); ok {
-					if seen[n.ID] {
-						continue
-					}
-					if len(nodes) >= networkItemLimit {
-						w.view.Coverage.Truncated = true
-						break
-					}
-					seen[n.ID] = true
-					nodes = append(nodes, n)
-				}
-			}
-		}
-	}
 	w.view.Coverage.SourceStates["nodes"] = "available"
 	if proxyErr != nil {
 		w.view.Coverage.SourceStates["nodes"] = "unavailable"
+	}
+	for i := range nodes {
+		if len(nodes[i].Subscriptions) > 0 {
+			// Keep the singular fields for older readers; all memberships are
+			// available to filtering and current clients.
+			nodes[i].SubscriptionID = nodes[i].Subscriptions[0].ID
+			nodes[i].SubscriptionName = nodes[i].Subscriptions[0].Name
+		}
 	}
 	w.coreSubs = subs
 	w.coreNodes = nodes
@@ -460,7 +453,7 @@ func networkProjectNode(raw mihomoRawProxy, subscription, token string, now time
 		return NetworkNode{}, false
 	}
 	n := mihomoProjectNode(raw, subscription, now)
-	return NetworkNode{ID: networkID("core", subscription, n.Name), SubscriptionID: subscription, Name: n.Name, Type: n.Type, State: n.State, DelayMS: n.DelayMS, CheckedAt: n.CheckedAt, Freshness: n.Freshness, Loaded: true}, true
+	return NetworkNode{ID: networkID("core", n.Name), SubscriptionID: subscription, Name: n.Name, Type: n.Type, State: n.State, DelayMS: n.DelayMS, CheckedAt: n.CheckedAt, Freshness: n.Freshness, Loaded: true}, true
 }
 
 func (w *networkWorker) networkSensitive(value string) bool {

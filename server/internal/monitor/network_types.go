@@ -13,6 +13,7 @@ const networkNodeBucket = "network.nodes"
 const networkLogsBucket = "network.logs"
 const networkExpiryBucket = "network.expiry"
 const networkItemLimit = 5000
+const networkNodeIdentityVersion = 2
 
 type NetworkQuery struct {
 	Section, Cursor, Q, Subscription, State, Node string
@@ -52,16 +53,21 @@ type NetworkSubscription struct {
 	Nodes          []NetworkNode `json:"nodes,omitempty"`
 }
 type NetworkNode struct {
-	ID               string     `json:"id"`
-	SubscriptionID   string     `json:"subscription_id,omitempty"`
-	SubscriptionName string     `json:"subscription_name,omitempty"`
-	Name             string     `json:"name"`
-	Type             string     `json:"type"`
-	State            string     `json:"state"`
-	DelayMS          *uint16    `json:"delay_ms,omitempty"`
-	CheckedAt        *time.Time `json:"checked_at,omitempty"`
-	Freshness        string     `json:"freshness"`
-	Loaded           bool       `json:"loaded"`
+	ID               string                    `json:"id"`
+	SubscriptionID   string                    `json:"subscription_id,omitempty"`
+	SubscriptionName string                    `json:"subscription_name,omitempty"`
+	Subscriptions    []NetworkNodeSubscription `json:"subscriptions,omitempty"`
+	Name             string                    `json:"name"`
+	Type             string                    `json:"type"`
+	State            string                    `json:"state"`
+	DelayMS          *uint16                   `json:"delay_ms,omitempty"`
+	CheckedAt        *time.Time                `json:"checked_at,omitempty"`
+	Freshness        string                    `json:"freshness"`
+	Loaded           bool                      `json:"loaded"`
+}
+type NetworkNodeSubscription struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 type NetworkConnection struct {
 	ID            string     `json:"id"`
@@ -134,27 +140,28 @@ type NetworkCoverage struct {
 	Notes        []string          `json:"notes"`
 }
 type NetworkView struct {
-	SettingsRevision int64                 `json:"settings_revision"`
-	ServiceID        string                `json:"service_id"`
-	Generation       int64                 `json:"generation"`
-	CollectedAt      *time.Time            `json:"collected_at,omitempty"`
-	State            string                `json:"state"`
-	Message          string                `json:"message"`
-	Overview         NetworkOverview       `json:"overview"`
-	Settings         NetworkSettings       `json:"settings"`
-	Subscriptions    []NetworkSubscription `json:"subscriptions"`
-	Nodes            []NetworkNode         `json:"nodes"`
-	Connections      []NetworkConnection   `json:"connections"`
-	Logs             []NetworkLog          `json:"logs"`
-	Usage            []NetworkUsage        `json:"usage"`
-	UsageGroups      []NetworkUsageGroup   `json:"usage_groups"`
-	UsageGroupStart  *time.Time            `json:"usage_group_start,omitempty"`
-	UsageGroupEnd    *time.Time            `json:"usage_group_end,omitempty"`
-	NodeHistory      []NetworkNodeSample   `json:"node_history"`
-	Total            int                   `json:"total"`
-	NextCursor       string                `json:"next_cursor,omitempty"`
-	HasMore          bool                  `json:"has_more"`
-	Coverage         NetworkCoverage       `json:"coverage"`
+	NodeIdentityVersion int                   `json:"node_identity_version"`
+	SettingsRevision    int64                 `json:"settings_revision"`
+	ServiceID           string                `json:"service_id"`
+	Generation          int64                 `json:"generation"`
+	CollectedAt         *time.Time            `json:"collected_at,omitempty"`
+	State               string                `json:"state"`
+	Message             string                `json:"message"`
+	Overview            NetworkOverview       `json:"overview"`
+	Settings            NetworkSettings       `json:"settings"`
+	Subscriptions       []NetworkSubscription `json:"subscriptions"`
+	Nodes               []NetworkNode         `json:"nodes"`
+	Connections         []NetworkConnection   `json:"connections"`
+	Logs                []NetworkLog          `json:"logs"`
+	Usage               []NetworkUsage        `json:"usage"`
+	UsageGroups         []NetworkUsageGroup   `json:"usage_groups"`
+	UsageGroupStart     *time.Time            `json:"usage_group_start,omitempty"`
+	UsageGroupEnd       *time.Time            `json:"usage_group_end,omitempty"`
+	NodeHistory         []NetworkNodeSample   `json:"node_history"`
+	Total               int                   `json:"total"`
+	NextCursor          string                `json:"next_cursor,omitempty"`
+	HasMore             bool                  `json:"has_more"`
+	Coverage            NetworkCoverage       `json:"coverage"`
 }
 type networkSettingsRecord struct {
 	HistoryGeneration int64           `json:"history_generation"`

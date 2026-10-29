@@ -90,10 +90,15 @@ func CollectMihomo(ctx context.Context, fetch func(context.Context, string) ([]b
 	if err != nil {
 		return nil, err
 	}
-	d, seen, names, err := parseMihomoProviders(body, now)
+	d, _, _, err := parseMihomoProviders(body, now)
 	if err != nil {
 		return nil, err
 	}
+	// Provider entries describe memberships and may repeat the same physical
+	// node. Only /proxies can supply aggregate core node counts and health.
+	d.Nodes = []MihomoNode{}
+	d.NodeCount, d.HealthyNodes, d.UnhealthyNodes, d.UnknownNodes, d.StaleNodes = 0, 0, 0, 0, 0
+	d.Truncated = d.SubscriptionCount > mihomoDetailLimit
 	body, err = fetch(ctx, "/proxies")
 	if err != nil {
 		d.ProxySourceState = "unavailable"
@@ -125,11 +130,6 @@ func CollectMihomo(ctx context.Context, fetch func(context.Context, string) ([]b
 		if mihomoNonNode(p) {
 			continue
 		}
-		key := p.Provider + "\x00" + p.Name
-		if seen[key] || (p.Provider == "" && names[p.Name]) {
-			continue
-		}
-		seen[key] = true
 		addMihomoNode(extra, mihomoProjectNode(p, p.Provider, now))
 	}
 	for _, n := range extra.Nodes {

@@ -76,6 +76,7 @@ func (e *Engine) UpdateNetworkSettings(ctx context.Context, id string, in Networ
 		if in.Generation != rec.Service.Generation {
 			return ErrConflict
 		}
+		previousHistoryGeneration := saved.HistoryGeneration
 		if in.LogRetentionHours == 0 {
 			in.LogRetentionHours = 24
 		}
@@ -121,6 +122,16 @@ func (e *Engine) UpdateNetworkSettings(ctx context.Context, id string, in Networ
 		in.ClearControlToken = false
 		in.HasControlToken = saved.ControlCipher != ""
 		in.ImportedSubscriptions = saved.Settings.ImportedSubscriptions
+		if in.LogRetentionHours < saved.Settings.LogRetentionHours {
+			// Existing hourly log prefixes need earlier expiry too. The maximum
+			// previous retention is 168h, so this work is bounded even when paused.
+			now := e.now().UTC().Truncate(time.Hour)
+			for hours := 0; hours <= 168; hours++ {
+				if err := networkPutLogExpiry(tx, id, previousHistoryGeneration, now.Add(-time.Duration(hours)*time.Hour), in.LogRetentionHours); err != nil {
+					return err
+				}
+			}
+		}
 		saved.Settings = in
 		saved.Revision++
 		if err := tx.Put(networkSettingsBucket, id, saved); err != nil {
@@ -210,7 +221,7 @@ func networkCopyView(v NetworkView) NetworkView {
 	return c
 }
 func emptyNetworkView(id string, generation int64) NetworkView {
-	return NetworkView{ServiceID: id, Generation: generation, State: "waiting", Message: "等待后台采集。", Settings: networkDefaults(generation), Subscriptions: []NetworkSubscription{}, Nodes: []NetworkNode{}, Connections: []NetworkConnection{}, Logs: []NetworkLog{}, Usage: []NetworkUsage{}, NodeHistory: []NetworkNodeSample{}, Coverage: NetworkCoverage{SourceStates: map[string]string{}, Notes: []string{"节点结果来自已有检测；未加载的订阅节点没有当前检测证据。", "首次接入前的历史及采集中断均不补造。"}}}
+	return NetworkView{NodeIdentityVersion: networkNodeIdentityVersion, ServiceID: id, Generation: generation, State: "waiting", Message: "等待后台采集。", Settings: networkDefaults(generation), Subscriptions: []NetworkSubscription{}, Nodes: []NetworkNode{}, Connections: []NetworkConnection{}, Logs: []NetworkLog{}, Usage: []NetworkUsage{}, NodeHistory: []NetworkNodeSample{}, Coverage: NetworkCoverage{SourceStates: map[string]string{}, Notes: []string{"节点结果来自已有检测；未加载的订阅节点没有当前检测证据。", "首次接入前的历史及采集中断均不补造。"}}}
 }
 func (e *Engine) NetworkView(ctx context.Context, id string, q NetworkQuery) (NetworkView, error) {
 	var rec serviceRecord
@@ -310,6 +321,12 @@ func (e *Engine) NetworkView(ctx context.Context, id string, q NetworkQuery) (Ne
 			}
 			if getErr == nil && cached.Generation == rec.Service.Generation && cached.SettingsRevision == saved.Revision {
 				out = cached
+				if cached.NodeIdentityVersion < networkNodeIdentityVersion {
+					// Old snapshots count provider memberships as physical nodes.
+					// Do not present those observations as canonical core evidence.
+					out.Nodes = []NetworkNode{}
+					out.Coverage.Notes = append(out.Coverage.Notes, "旧节点身份快照已失效，等待核心重新采集；新身份历史从本次接入起记录。")
+				}
 				out.Settings = saved.Settings
 				out.State = "stale"
 				out.Message = "后台尚未恢复；这是已保存的旧快照。"
@@ -410,7 +427,7 @@ func (e *Engine) NetworkView(ctx context.Context, id string, q NetworkQuery) (Ne
 	case "nodes":
 		filtered := []NetworkNode{}
 		for _, n := range out.Nodes {
-			if contains(n.Name+" "+n.Type) && (q.Subscription == "" || n.SubscriptionID == q.Subscription) && (q.State == "" || n.State == q.State) {
+			if contains(n.Name+" "+n.Type) && (q.Subscription == "" || networkNodeInSubscription(n, q.Subscription)) && (q.State == "" || n.State == q.State) {
 				filtered = append(filtered, n)
 			}
 		}
@@ -673,4 +690,16 @@ func boundedNetworkScan(tx storage.Tx, bucket string, scan storage.Scan, limit i
 		scan.After = rows[len(rows)-1].Key
 	}
 	return out, nil
+}
+
+func networkNodeInSubscription(n NetworkNode, id string) bool {
+	if n.SubscriptionID == id {
+		return true
+	}
+	for _, sub := range n.Subscriptions {
+		if sub.ID == id {
+			return true
+		}
+	}
+	return false
 }

@@ -326,7 +326,11 @@ func (e *Engine) finish(ctx context.Context, c Check) error {
 		if c.Success {
 			st.LastSuccess = &c
 			st.LastSuccessAt = &c.CompletedAt
-			st.RecoveryCount++
+			if st.OpenIncident {
+				st.RecoveryCount++
+			} else {
+				st.RecoveryCount = 0
+			}
 			st.FailureCount = 0
 			if st.OpenRestriction {
 				st.RestrictionCount++
@@ -344,6 +348,7 @@ func (e *Engine) finish(ctx context.Context, c Check) error {
 			}
 			if st.OpenIncident && st.RecoveryCount >= rec.Service.RecoveryThreshold {
 				st.OpenIncident = false
+				st.RecoveryCount = 0
 				incidentID := st.IncidentID
 				st.IncidentID = ""
 				if err := e.event(tx, c, "recovery", "info", 1, incidentID); err != nil {

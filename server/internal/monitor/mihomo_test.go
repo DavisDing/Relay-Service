@@ -98,7 +98,7 @@ func TestMihomoCollectorFixedRequestsAndDeduplication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(paths, ",") != "/providers/proxies,/proxies" || d.NodeCount != 3 || d.ProxySourceState != "available" {
+	if strings.Join(paths, ",") != "/providers/proxies,/proxies" || d.NodeCount != 2 || d.ProxySourceState != "available" {
 		t.Fatalf("requests/details: %v %+v", paths, d)
 	}
 }

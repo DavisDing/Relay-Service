@@ -88,7 +88,7 @@ func validateInput(in *ServiceInput) error {
 	in.Kind = strings.ToLower(strings.TrimSpace(in.Kind))
 	in.BaseURL = strings.TrimSpace(in.BaseURL)
 	in.UIURL = strings.TrimSpace(in.UIURL)
-	if len(in.Name) == 0 || len(in.Name) > 120 || len(in.Group) > 120 || len(in.Token) > 8192 {
+	if !safeName(in.Name) || len(in.Name) > 120 || len(in.Group) > 120 || in.Group != "" && !safeName(in.Group) || len(in.Token) > 8192 {
 		return ErrValidation
 	}
 	switch in.Kind {
@@ -289,6 +289,9 @@ func (e *Engine) serviceWithState(tx storage.Tx, rec serviceRecord) (Service, er
 	s.LastSuccessAt = st.LastSuccessAt
 	s.FailureCount = st.FailureCount
 	s.RecoveryCount = st.RecoveryCount
+	if !st.OpenIncident {
+		s.RecoveryCount = 0
+	}
 	s.OpenIncident = st.OpenIncident
 	s.OpenRestriction = st.OpenRestriction
 	s.CredentialConfigured = rec.Cipher != ""
@@ -502,24 +505,40 @@ func (e *Engine) History(ctx context.Context, id, cursor string, limit int) ([]C
 }
 func sequenceKeyMust(s string) string { n, _ := strconv.ParseUint(s, 10, 64); return sequenceKey(n) }
 func (e *Engine) Alerts(ctx context.Context, cursor string, limit int) ([]Alert, error) {
+	items, _, err := e.AlertsPage(ctx, cursor, limit)
+	return items, err
+}
+
+// AlertsPage checks for a subsequent record in the same read transaction. A
+// full page alone does not establish that another page exists, even at limit 500.
+func (e *Engine) AlertsPage(ctx context.Context, cursor string, limit int) ([]Alert, bool, error) {
+	limit = pageLimit(limit)
 	after := ""
 	if cursor != "" {
 		n, err := strconv.ParseUint(cursor, 10, 64)
 		if err != nil {
-			return nil, ErrValidation
+			return nil, false, ErrValidation
 		}
 		after = sequenceKey(n)
 	}
 	out := []Alert{}
+	hasMore := false
 	err := e.store.View(ctx, func(tx storage.Tx) error {
 		policy, err := readRetention(tx)
 		if err != nil {
 			return err
 		}
 		historyCutoff := retentionCutoff(e.now(), policy.HistoryDays)
-		rows, err := tx.Scan(alertsBucket, storage.Scan{After: after, Limit: pageLimit(limit)})
+		rows, err := tx.Scan(alertsBucket, storage.Scan{After: after, Limit: limit})
 		if err != nil {
 			return err
+		}
+		if len(rows) == limit {
+			next, err := tx.Scan(alertsBucket, storage.Scan{After: rows[len(rows)-1].Key, Limit: 1})
+			if err != nil {
+				return err
+			}
+			hasMore = len(next) > 0
 		}
 		for _, row := range rows {
 			var a Alert
@@ -553,7 +572,7 @@ func (e *Engine) Alerts(ctx context.Context, cursor string, limit int) ([]Alert,
 		}
 		return nil
 	})
-	return out, err
+	return out, hasMore, err
 }
 
 // Ack advances only this principal's read position. A batch must enumerate the

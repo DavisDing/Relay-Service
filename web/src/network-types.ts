@@ -1,6 +1,6 @@
 export type NetworkSection = 'overview' | 'usage' | 'subscriptions' | 'nodes' | 'connections' | 'logs';
 export type NetworkNode = {
-  id: string; subscription_id?: string; subscription_name?: string; name: string; type: string; state: string;
+  id: string; subscription_id?: string; subscription_name?: string; subscriptions?: { id: string; name: string }[]; name: string; type: string; state: string;
   delay_ms?: number; checked_at?: string; freshness: string; loaded: boolean;
 };
 export type NetworkSubscription = {
