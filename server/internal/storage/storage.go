@@ -23,6 +23,8 @@ type Scan struct {
 	After   string
 	Limit   int
 	Reverse bool
+	// Keys optionally restricts a scan to at most 500 exact record keys.
+	Keys []string
 }
 
 // CountOptions describes a bounded timestamp count over JSON records. The

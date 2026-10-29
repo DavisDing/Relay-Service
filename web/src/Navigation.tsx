@@ -5,7 +5,7 @@ import type { IconName } from './ui';
 
 type Page = { key: string; label: string; description: string; icon: IconName };
 const monitoring: Page[] = [
-  { key: 'services', label: '服务总览', description: '运行态势、分组与检查明细', icon: 'grid' },
+  { key: 'services', label: '服务监控', description: '服务运行态势、分组与检查明细', icon: 'grid' },
   { key: 'alerts', label: '故障与告警', description: '故障、恢复与访问受限事件', icon: 'bell' },
 ];
 const management: Page[] = [
@@ -128,9 +128,9 @@ export function Navigation({ active, admin, busy, incidentCount, onNavigate, onL
       }}
       onKeyDown={event => { if (event.key === 'Escape' && menu) { event.preventDefault(); event.stopPropagation(); close(true); } }}>
       <div className="global-nav-bar">
-        <Button className="nav-brand" aria-label="Relay 服务总览" disabled={busy} onClick={() => navigate('services')}><Icon name="pulse" /><span>Relay</span></Button>
+        <Button className="nav-brand" aria-label="Relay 服务监控" disabled={busy} onClick={() => navigate('services')}><Icon name="pulse" /><span>Relay</span></Button>
         <nav className="global-nav-links" aria-label="主要导航">
-          <Button className="nav-trigger" data-active={active === 'services' || active === 'alerts'} disabled={busy} {...triggerProps('monitoring')}>监控{incidentCount > 0 && <i className="nav-alert-dot" aria-label={`${incidentCount} 个服务有未恢复事件`} />}</Button>
+          <Button className="nav-trigger" data-active={active === 'services' || active === 'alerts'} disabled={busy} {...triggerProps('monitoring')}>服务监控{incidentCount > 0 && <i className="nav-alert-dot" aria-label={`${incidentCount} 个服务有未恢复事件`} />}</Button>
           <Button className="nav-trigger" data-active={active === 'models'} aria-current={active === 'models' ? 'page' : undefined} disabled={busy}
             onPointerEnter={() => close()} onClick={() => navigate('models')}>大模型</Button>
           <Button className="nav-trigger" data-active={active === 'network'} aria-current={active === 'network' ? 'page' : undefined} disabled={busy}

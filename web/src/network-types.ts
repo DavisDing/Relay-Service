@@ -2,6 +2,7 @@ export type NetworkSection = 'overview' | 'usage' | 'subscriptions' | 'nodes' | 
 export type NetworkNode = {
   id: string; subscription_id?: string; subscription_name?: string; subscriptions?: { id: string; name: string }[]; name: string; type: string; state: string;
   delay_ms?: number; checked_at?: string; freshness: string; loaded: boolean;
+  availability_24h?: { start_at: string; end_at: string; success: number; failure: number; success_rate?: number; covered_intervals: number; intervals: string[] };
 };
 export type NetworkSubscription = {
   id: string; name: string; source: 'provider' | 'import' | 'control'; active: boolean;

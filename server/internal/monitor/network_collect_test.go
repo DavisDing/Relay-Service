@@ -45,7 +45,7 @@ func TestNetworkInventoryCanonicalNodesAcrossFourProviders(t *testing.T) {
 	}
 	providers := map[string]any{}
 	for _, name := range []string{"故障转移", "自动选择", "default", "星网-Starnetwork"} {
-		providers[name] = map[string]any{"proxies": append(append([]any{}, nodes...), nodes[0])}
+		providers[name] = map[string]any{"vehicleType": "HTTP", "proxies": append(append([]any{}, nodes...), nodes[0])}
 	}
 	providerBody := networkFixtureJSON(t, map[string]any{"providers": providers})
 	proxyBody := networkFixtureJSON(t, map[string]any{"proxies": proxies})

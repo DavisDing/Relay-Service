@@ -17,6 +17,7 @@ function load(name) {
   const module = { exports: {} };
   new Function('require', 'module', 'exports', code)(specifier => {
     if (!specifier.startsWith('.')) return require(specifier);
+    if (specifier.endsWith('.css')) return {};
     return load(specifier.slice(2) + (['./presentation', './api', './solar'].includes(specifier) ? '.ts' : '.tsx'));
   }, module, module.exports);
   modules.set(name, module.exports);
@@ -149,7 +150,7 @@ test('navigation exposes real workspaces, hides admin pages for devices and make
     active: 'alerts', admin, busy: false, incidentCount: 2, onNavigate: noop, onLogout: noop,
   }));
   const html = nav(true);
-  for (const name of ['服务总览', '故障与告警', '访问设备', '系统设置', '诊断', '外观与账户', '退出登录']) assert.ok(html.includes(name));
+  for (const name of ['服务监控', '故障与告警', '访问设备', '系统设置', '诊断', '外观与账户', '退出登录']) assert.ok(html.includes(name));
   assert.match(html, /aria-current="page"/);
   assert.match(html, /2 个服务有未恢复事件/);
   assert.match(html, /id="nav-monitoring"[^>]*aria-hidden="true"[^>]*inert=""/);
@@ -236,4 +237,27 @@ test('mihomo quota and existing node history preserve stale evidence labels', ()
   const { CheckDetails }=load('CheckDetails.tsx');
   const html=renderToStaticMarkup(React.createElement(CheckDetails,{check:{details:{source:'/providers/proxies',mihomo:{subscription_count:1,subscriptions:[{name:'airport',usage_state:'available',used_bytes:1024,remaining_bytes:2048}],node_count:1,healthy_nodes:0,unhealthy_nodes:0,unknown_nodes:1,stale_nodes:1,proxy_source_state:'available',nodes:[{name:'old-node',type:'ss',state:'unknown',delay_ms:35,freshness:'stale'}]}}}}));
   assert.match(html,/剩余 2.0 KiB/);assert.match(html,/记录过期/);assert.match(html,/未主动测速/);assert.match(html,/old-node/);
+});
+
+const { WorkspacePagination } = load('Workspace.tsx');
+const { NodeAvailability } = load('NetworkProxy.tsx');
+test('workspace pagination shares secondary controls and explicit disabled boundaries', () => {
+  const html = renderToStaticMarkup(React.createElement(WorkspacePagination, {
+    total: 25, page: 1, hasPrevious: false, hasNext: false, onPrevious: noop, onNext: noop,
+  }));
+  assert.match(html, /共 25 条 · 第 1 页/);
+  assert.equal((html.match(/class="secondary"/g) || []).length, 2);
+  assert.equal((html.match(/disabled=""/g) || []).length, 2);
+});
+test('node availability presents distinct sample ratio and leaves missing history unknown', () => {
+  const node = { id: 'node', name: 'HK', type: 'AnyTLS', state: 'healthy', loaded: true, freshness: 'fresh' };
+  const missing = renderToStaticMarkup(React.createElement(NodeAvailability, { node }));
+  assert.match(missing, /暂无有效检测/);
+  assert.doesNotMatch(missing, /100.0%/);
+  const html = renderToStaticMarkup(React.createElement(NodeAvailability, { node: { ...node, availability_24h: {
+    start_at: '2026-10-28T10:00:00Z', end_at: '2026-10-29T10:00:00Z', success: 3, failure: 1,
+    success_rate: .75, covered_intervals: 2, intervals: Array.from({ length: 96 }, (_, i) => i === 0 ? 'healthy' : i === 1 ? 'unhealthy' : 'unknown'),
+  } } }));
+  assert.match(html, /75.0%/); assert.match(html, /4 次检测/); assert.match(html, /2\/96 时段有样本/);
+  assert.match(html, /3 次成功，1 次失败/);
 });

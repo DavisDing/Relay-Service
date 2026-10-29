@@ -330,7 +330,7 @@ func (e *Engine) flushNetwork(ctx context.Context, w *networkWorker, force bool)
 			if err := tx.Put(networkUsageBucket, key, hour); err != nil {
 				return err
 			}
-			if err := networkPutExpiry(tx, networkUsageBucket, key, usage.At.Truncate(time.Hour).Add(169*time.Hour)); err != nil {
+			if err := networkPutExpiry(tx, networkUsageBucket, key, networkHourExpires(usage.At)); err != nil {
 				return err
 			}
 		}
@@ -350,7 +350,7 @@ func (e *Engine) flushNetwork(ctx context.Context, w *networkWorker, force bool)
 			if err := tx.Put(networkNodeBucket, key, hour); err != nil {
 				return err
 			}
-			if err := networkPutExpiry(tx, networkNodeBucket, key, n.At.Truncate(time.Hour).Add(169*time.Hour)); err != nil {
+			if err := networkPutExpiry(tx, networkNodeBucket, key, networkHourExpires(n.At)); err != nil {
 				return err
 			}
 		}

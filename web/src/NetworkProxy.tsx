@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { api, APIError, APIRequestSupersededError } from './api';
-import { Button, Icon } from './ui';
-import { WorkspaceTabs, WorkspaceMetric as Metric, WorkspaceEmpty as Empty } from './Workspace';
+import { Button, Icon, Modal } from './ui';
+import { WorkspaceTabs, WorkspaceMetric as Metric, WorkspaceEmpty as Empty, WorkspaceSection, WorkspacePagination } from './Workspace';
 import { time } from './presentation';
 import type { Service } from './types';
 import type { NetworkCoverage, NetworkNode, NetworkNodeSample, NetworkSection, NetworkSettings, NetworkSubscription, NetworkUsage, NetworkView } from './network-types';
@@ -12,6 +12,12 @@ const sections: { key: NetworkSection; label: string }[] = [
   { key: 'subscriptions', label: '订阅' }, { key: 'nodes', label: '节点' },
   { key: 'connections', label: '连接' }, { key: 'logs', label: '日志' },
 ];
+const sectionDescriptions: Record<NetworkSection, string> = {
+  overview: '查看代理流量、活动连接与节点检测概况。', usage: '按实际采样观察流量变化与连接归因。',
+  subscriptions: '查看外部订阅的额度、到期与所属节点；代理组不计入订阅。',
+  nodes: '查看节点当前检测与近 24 小时可用性，历史记录独立展开。',
+  connections: '查看当前活动连接、路由与采样速率。', logs: '按等级检索核心日志与采集事件。',
+};
 const stateNames: Record<string, string> = {
   healthy: '检测成功', unhealthy: '检测失败', available: '已采集', fresh: '有效', stale: '已过期',
   unknown: '待观测', missing: '无检测样本', future: '源时间异常', paused: '已暂停',
@@ -50,6 +56,50 @@ function nodeTone(state?: string, freshness?: string) {
 function NodeState({ node }: { node: NetworkNode }) {
   const tone = node.loaded ? nodeTone(node.state, node.freshness) : 'unknown';
   return <span className={`workspace-state ${tone}`}>{!node.loaded ? '目录未关联核心' : node.freshness === 'stale' ? '样本已过期' : tone === 'healthy' ? '检测成功' : tone === 'unhealthy' ? '检测失败' : '待观测'}</span>;
+}
+
+export function NodeAvailability({ node }: { node: NetworkNode }) {
+  const value = node.availability_24h;
+  const count = value ? value.success + value.failure : 0;
+  const rate = value?.success_rate;
+  const text = rate === undefined ? '暂无有效检测' : `${(rate * 100).toFixed(1)}%`;
+  return <div className="network-availability">
+    <strong>{text}</strong><small>{count ? `${count} 次检测 · ${value!.covered_intervals}/96 时段有样本` : '首次接入前与采集缺口保持未知'}</small>
+    <div className="network-availability-bars" role="img" aria-label={`近24小时有效检测成功率 ${text}；${value?.success || 0} 次成功，${value?.failure || 0} 次失败；灰色时段无有效样本。`}>
+      {(value?.intervals || Array.from({ length: 96 }, () => 'unknown')).map((state, index) => <span key={index} className={state} title={`${value ? new Date(Date.parse(value.start_at) + index * 900000).toLocaleString('zh-CN') : '未采集'} · ${state === 'healthy' ? '有效检测成功' : state === 'unhealthy' ? '有检测失败' : '无有效样本'}`} />)}
+    </div>
+  </div>;
+}
+
+function NodeHistory({ serviceID, generation, node, onClose, onUnauthorized }: { serviceID: string; generation: number; node: NetworkNode; onClose: () => void; onUnauthorized?: () => void }) {
+  const titleID = useId();
+  const [hours, setHours] = useState(24); const [page, setPage] = useState(0);
+  const [samples, setSamples] = useState<NetworkNodeSample[]>([]); const [loading, setLoading] = useState(true); const [error, setError] = useState('');
+  const unauthorized = useRef(onUnauthorized); unauthorized.current = onUnauthorized;
+  useEffect(() => {
+    let active = true;
+    setLoading(true); setError(''); setSamples([]); setPage(0);
+    api<NetworkView>(`/network/${encodeURIComponent(serviceID)}?section=nodes&node_id=${encodeURIComponent(node.id)}&hours=${hours}&limit=1`).then(({ data }) => {
+      if (active && data.generation === generation) setSamples(data.node_history || []);
+    }).catch(reason => {
+      if (!active || reason instanceof APIRequestSupersededError) return;
+      if (reason instanceof APIError && reason.status === 401) unauthorized.current?.();
+      else setError(reason instanceof Error ? reason.message : '节点历史读取失败。');
+    }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [serviceID, generation, node.id, hours]);
+  const history = [...samples].reverse();
+  return <Modal titleId={titleID} onClose={onClose}><section className="dialog data-workspace network-history-dialog">
+    <div className="section-head"><div><h2 id={titleID}>{node.name} · 检测历史</h2><p className="sub">保存实际观测记录；相同源检测可能被多次观察，不能当作多次检测。</p></div><Button className="icon-button" aria-label="关闭节点历史" onClick={onClose}><Icon name="close" /></Button></div>
+    <label className="network-history-range">历史范围<select value={hours} onChange={event => setHours(Number(event.target.value))}><option value={24}>近 24 小时</option><option value={168}>近 7 天</option></select></label>
+    {error && <p className="banner error" role="alert">{error}</p>}
+    {loading ? <p className="workspace-loading" role="status">正在读取检测历史…</p> : !error && <>
+      {hours === 24 && <NodeTimeline samples={samples} />}
+      <div className="workspace-table-scroll" tabIndex={0} role="region" aria-label="节点检测历史，可横向滚动"><table className="workspace-table"><thead><tr><th className="workspace-time">源检测时间</th><th className="workspace-time">Relay 观测时间</th><th>检测结果</th><th className="workspace-number">延迟</th></tr></thead><tbody>{history.slice(page * 20, page * 20 + 20).map((sample, index) => <tr key={`${sample.at}-${index}`}><td className="workspace-time">{time(sample.checked_at)}</td><td className="workspace-time">{time(sample.at)}</td><td><span className={`workspace-state ${nodeTone(sample.state, sample.freshness)}`}>{label(sample.freshness === 'fresh' ? sample.state : sample.freshness)}</span></td><td className="workspace-number">{nodeTone(sample.state, sample.freshness) === 'healthy' && sample.delay_ms !== undefined ? `${sample.delay_ms} ms` : '—'}</td></tr>)}</tbody></table></div>
+      {!history.length && <Empty>所选时段尚无保存的节点观测记录。</Empty>}
+      {!!history.length && <WorkspacePagination label="节点历史分页" total={history.length} page={page + 1} hasPrevious={page > 0} hasNext={(page + 1) * 20 < history.length} onPrevious={() => setPage(value => value - 1)} onNext={() => setPage(value => value + 1)} />}
+    </>}
+  </section></Modal>;
 }
 
 function Coverage({ coverage }: { coverage: NetworkCoverage }) {
@@ -186,12 +236,11 @@ export function NetworkProxy({ services, admin, initialServiceID = '', refreshKe
     async function load() {
       if (!active || inFlight) return;
       inFlight = true; setLoading(true);
-      const params = new URLSearchParams({ section, limit: section === 'usage' ? '200' : '100', hours: String(hours) });
+      const params = new URLSearchParams({ section, limit: section === 'usage' ? '200' : '25', hours: String(hours) });
       if (cursor) params.set('cursor', cursor);
       if (search) params.set('q', search);
       if (subscription && section === 'nodes') params.set('subscription', subscription);
       if (filter) params.set('state', filter);
-      if (node && section === 'nodes') params.set('node_id', node.id);
       try {
         const { data } = await api<NetworkView>(`/network/${encodeURIComponent(serviceID)}?${params}`);
         if (!active || scope.current !== version) return;
@@ -212,7 +261,7 @@ export function NetworkProxy({ services, admin, initialServiceID = '', refreshKe
     // Clear data at a view boundary; a failed poll within that boundary retains its timestamped last result.
     setView(null); void load();
     return () => { active = false; clearTimeout(timer); };
-  }, [selectedScope, section, cursor, search, subscription, filter, node?.id, hours, revision, refreshKey, restricted]);
+  }, [selectedScope, section, cursor, search, subscription, filter, hours, revision, refreshKey, restricted]);
 
   function resetPage() { setCursor(''); setPrevious([]); }
   function chooseSection(next: NetworkSection) { setSection(next); resetPage(); setQuery(''); setSearch(''); setFilter(''); setNode(null); }
@@ -278,22 +327,23 @@ export function NetworkProxy({ services, admin, initialServiceID = '', refreshKe
     } finally { if (mounted.current && currentInstance.current === version) setImporting(false); }
   }
 
-  if (!instances.length) return <section className="data-workspace"><Empty>尚未接入 mihomo。请在服务总览添加“mihomo 订阅与节点质量”，填写控制 API 地址及检查凭据。</Empty>{admin && onAdd && <Button className="secondary" onClick={onAdd}><Icon name="plus" />接入 mihomo</Button>}</section>;
+  if (!instances.length) return <section className="data-workspace"><Empty>尚未接入 mihomo。请在服务监控添加“mihomo 订阅与节点质量”，填写控制 API 地址及检查凭据。</Empty>{admin && onAdd && <Button className="secondary" onClick={onAdd}><Icon name="plus" />接入 mihomo</Button>}</section>;
   const overview = view?.overview;
   const available = (source: string) => !!view && !['stale', 'paused'].includes(view.state) && ['available', 'healthy'].includes(view.coverage.source_states?.[source] || '');
   const subscriptions = view?.subscriptions || []; const nodes = view?.nodes || []; const usage = view?.usage || [];
   const isList = ['subscriptions', 'nodes', 'connections', 'logs', 'usage'].includes(section);
   return <div className="data-workspace">
-    <section className="workspace-instance-bar">
+    <div className="workspace-navigation"><section className="workspace-instance-bar">
       <label>mihomo 实例<select value={serviceID} onChange={event => setSelectedID(event.target.value)}>{instances.map(item => <option key={item.id} value={item.id}>{item.name}{!item.enabled ? ' · 已暂停' : ''}</option>)}</select></label>
       <div className="workspace-instance-meta"><span className={`workspace-state ${['healthy', 'available'].includes(view?.state || '') ? 'healthy' : 'unknown'}`}>{view ? label(view.state) : '等待采集数据'}</span><small>最近采集 {time(view?.collected_at)}</small></div>
       {service.ui_url && <a className="button secondary network-console-link" href={service.ui_url} target="_blank" rel="noopener noreferrer">原控制台<Icon name="external" /></a>}
     </section>
-    <WorkspaceTabs label="网络代理视图" items={sections.map(item => ({ ...item, note: !admin && ['connections', 'logs'].includes(item.key) ? '管理员' : undefined }))} value={section} onChange={chooseSection} />
+    <WorkspaceTabs label="网络代理视图" items={sections.map(item => ({ ...item, note: !admin && ['connections', 'logs'].includes(item.key) ? '管理员' : undefined }))} value={section} onChange={chooseSection} /></div>
+    <WorkspaceSection title={sections.find(item => item.key === section)!.label} description={sectionDescriptions[section]} />
     {error && <p className="banner error" role="alert">{error}{view ? ' 当前显示最近一次成功读取的数据，请核对采集时间。' : ''}</p>}
     {notice && <p className="network-notice" role="status">{notice}</p>}
     {restricted ? <Empty>连接目的地与核心日志仅管理员可查看。你仍可查看概览、用量、订阅和节点的脱敏信息。</Empty> : <>
-      {view?.message && <p className="network-context">{view.message}</p>}
+      {view?.message && view.state !== 'available' && <p className="network-context" role="status">{view.message}</p>}
       {section === 'overview' && <>
         <div className="workspace-metrics" aria-label="当前网络指标">
           <Metric title="上传速率" value={available('traffic') ? rate(overview?.upload_rate) : '—'} note="核心实时观测" />
@@ -303,18 +353,21 @@ export function NetworkProxy({ services, admin, initialServiceID = '', refreshKe
         </div>
         <section className="workspace-panel"><h2>订阅与节点</h2><dl className="workspace-facts network-mini-grid network-inventory-counts"><div><dt>订阅</dt><dd>{overview?.subscription_count ?? '—'} 项</dd></div><div><dt>节点目录</dt><dd>{overview?.node_count ?? '—'} 项</dd></div><div><dt>检测成功</dt><dd>{overview?.healthy_nodes ?? '—'} 项</dd></div><div><dt>检测失败</dt><dd>{overview?.unhealthy_nodes ?? '—'} 项</dd></div><div><dt>待观测 / 未关联</dt><dd>{overview?.unknown_nodes ?? '—'} 项</dd></div></dl><p className="sub">管理层激活仅表示配置选择；无法核实与核心的归属时，目录节点保持未知，不借用同名节点的检测结果。</p></section>
         <section className="workspace-panel"><h2>核心与采集</h2><dl className="workspace-facts network-mini-grid"><div><dt>内核版本</dt><dd>{overview?.core_version || '尚未取得'}</dd></div><div><dt>当前配置</dt><dd>{overview?.active_config || '源未提供'}</dd></div><div><dt>上传累计</dt><dd>{available('traffic') ? bytes(overview?.upload_total) : '—'}</dd></div><div><dt>下载累计</dt><dd>{available('traffic') ? bytes(overview?.download_total) : '—'}</dd></div></dl><p className="sub">后台采集独立于此页面运行；这里读取已有状态，不会切换代理、刷新订阅或主动测速。</p></section>
-        {admin && view && settings && <details className="workspace-panel"><summary>后台采集与日志保存</summary><form onSubmit={event => { event.preventDefault(); void saveSettings(); }}><fieldset disabled={saving}><h3>多订阅配置管理服务</h3><p className="sub">自动读取原面板的配置文件订阅。控制服务地址填写原面板所在的协议、主机和端口；控制令牌与 mihomo 核心 secret 是两种凭据。仅由 Relay 后端使用，保存后不回显。</p><div className="form-grid"><label>控制服务地址<input type="url" maxLength={2048} placeholder="https://面板主机:端口" value={settings.control_base_url || ''} autoComplete="off" onChange={event => setSettings({ ...settings, control_base_url: event.target.value })} /></label><label>控制服务令牌<input type="password" maxLength={8192} autoComplete="new-password" value={controlToken} placeholder={settings.has_control_token ? '已配置；留空保留原值' : '按控制服务设置填写；无鉴权时可留空'} onChange={event => { setControlToken(event.target.value); setSettings({ ...settings, clear_control_token: false }); }} /></label></div>{settings.has_control_token && <label className="network-toggle"><input type="checkbox" checked={settings.clear_control_token || false} onChange={event => { setSettings({ ...settings, clear_control_token: event.target.checked }); if (event.target.checked) setControlToken(''); }} />清除已保存的控制服务令牌</label>}<h3>采集与保留</h3><label className="network-toggle"><input type="checkbox" checked={settings.enabled} onChange={event => setSettings({ ...settings, enabled: event.target.checked })} />启用网络详情后台采集</label><label className="network-toggle"><input type="checkbox" checked={settings.persist_logs} onChange={event => setSettings({ ...settings, persist_logs: event.target.checked })} />持久保存脱敏日志</label><p className="sub">默认日志只保留实时短缓冲。节点页面展示最近 24 小时，流量汇总保留 7 天；开启持久日志后按以下时间与容量上限保留。</p><div className="form-grid"><label>日志保留小时<input type="number" min="1" max="168" required value={settings.log_retention_hours} onChange={event => setSettings({ ...settings, log_retention_hours: Number(event.target.value) })} /></label><label>每实例日志上限（MiB）<input type="number" min="1" max="100" required value={settings.log_limit_mib} onChange={event => setSettings({ ...settings, log_limit_mib: Number(event.target.value) })} /></label></div><div className="buttons"><Button className="secondary" type="submit" loading={saving}>保存采集策略</Button><Button type="button" className="text" disabled={saving} onClick={() => { setSettings(null); setControlToken(''); setRevision(value => value + 1); }}>重读当前设置</Button></div></fieldset></form></details>}
+        {admin && view && settings && <details className="workspace-panel"><summary>后台采集与日志保存</summary><form onSubmit={event => { event.preventDefault(); void saveSettings(); }}><fieldset disabled={saving}><h3>多订阅配置管理服务</h3><p className="sub">自动读取原面板的配置文件订阅。控制服务地址填写原面板所在的协议、主机和端口；控制令牌与 mihomo 核心 secret 是两种凭据。仅由 Relay 后端使用，保存后不回显。</p><div className="form-grid"><label>控制服务地址<input type="url" maxLength={2048} placeholder="https://面板主机:端口" value={settings.control_base_url || ''} autoComplete="off" onChange={event => setSettings({ ...settings, control_base_url: event.target.value })} /></label><label>控制服务令牌<input type="password" maxLength={8192} autoComplete="new-password" value={controlToken} placeholder={settings.has_control_token ? '已配置；留空保留原值' : '按控制服务设置填写；无鉴权时可留空'} onChange={event => { setControlToken(event.target.value); setSettings({ ...settings, clear_control_token: false }); }} /></label></div>{settings.has_control_token && <label className="network-toggle"><input type="checkbox" checked={settings.clear_control_token || false} onChange={event => { setSettings({ ...settings, clear_control_token: event.target.checked }); if (event.target.checked) setControlToken(''); }} />清除已保存的控制服务令牌</label>}<h3>采集与保留</h3><label className="network-toggle"><input type="checkbox" checked={settings.enabled} onChange={event => setSettings({ ...settings, enabled: event.target.checked })} />启用网络详情后台采集</label><label className="network-toggle"><input type="checkbox" checked={settings.persist_logs} onChange={event => setSettings({ ...settings, persist_logs: event.target.checked })} />持久保存脱敏日志</label><p className="sub">默认日志只保留实时短缓冲。节点可用性展示近 24 小时，节点历史与流量汇总保留 7 天；开启持久日志后按以下时间与容量上限保留。</p><div className="form-grid"><label>日志保留小时<input type="number" min="1" max="168" required value={settings.log_retention_hours} onChange={event => setSettings({ ...settings, log_retention_hours: Number(event.target.value) })} /></label><label>每实例日志上限（MiB）<input type="number" min="1" max="100" required value={settings.log_limit_mib} onChange={event => setSettings({ ...settings, log_limit_mib: Number(event.target.value) })} /></label></div><div className="buttons"><Button className="secondary" type="submit" loading={saving}>保存采集策略</Button><Button type="button" className="text" disabled={saving} onClick={() => { setSettings(null); setControlToken(''); setRevision(value => value + 1); }}>重读当前设置</Button></div></fieldset></form></details>}
       </>}
+      <section className={isList && section !== 'usage' ? "workspace-results" : "workspace-results-unframed"} aria-label={sections.find(item => item.key === section)!.label}>
       {isList && <div className="workspace-toolbar">{section !== 'usage' && <label className="workspace-search"><Icon name="search" /><input type="search" maxLength={120} placeholder="搜索当前来源记录" value={query} onChange={event => { setQuery(event.target.value); resetPage(); }} aria-label="搜索网络记录" /></label>}{section === 'nodes' && <><select aria-label="节点状态" value={filter} onChange={event => { setFilter(event.target.value); resetPage(); }}><option value="">全部状态</option><option value="healthy">检测成功</option><option value="unhealthy">检测失败</option><option value="unknown">未知</option></select>{subscription && <Button className="text" onClick={() => { setSubscription(''); setSubscriptionName(''); resetPage(); }}>清除订阅筛选：{subscriptionName || '已选订阅'}<Icon name="close" /></Button>}</>}{section === 'logs' && <select aria-label="日志等级" value={filter} onChange={event => { setFilter(event.target.value); resetPage(); }}><option value="">全部等级</option><option value="error">错误</option><option value="warning">警告</option><option value="info">信息</option><option value="debug">调试</option></select>}{section === 'usage' && <select aria-label="流量时间范围" value={hours} onChange={event => { setHours(Number(event.target.value)); resetPage(); }}><option value={1}>最近 1 小时</option><option value={24}>最近 24 小时</option><option value={168}>最近 7 天</option></select>}</div>}
       {!view && !error && <p role="status" className="workspace-loading">正在读取网络代理信息…</p>}
       {view && section === 'usage' && <section className="workspace-panel"><h2>观测流量</h2><UsageChart items={usage} /><dl className="workspace-facts network-mini-grid"><div><dt>采集时段</dt><dd>{usage.length} 个</dd></div><div><dt>源观测样本</dt><dd>{usage.reduce((sum, item) => sum + item.samples, 0)} 次</dd></div><div><dt>计数器重置</dt><dd>{usage.filter(item => item.counter_reset).length} 个时段</dd></div><div><dt>覆盖开始</dt><dd>{time(view.coverage.started_at)}</dd></div></dl><p className="sub">此处为核心全局流量增量；节点、订阅无法可靠关联时不分摊，采集缺口不补算。</p></section>}
       {view && section === 'usage' && admin && <section className="workspace-panel"><div className="network-row-head"><h2>连接采样归因</h2><select aria-label="流量归因维度" value={usageDimension} onChange={event => setUsageDimension(event.target.value as 'client' | 'rule' | 'chain')}><option value="client">按客户端</option><option value="rule">按规则</option><option value="chain">按代理链</option></select></div><p className="sub">仅统计同一连接在相邻有效快照间的流量差；首见、断流和已结束的短连接可能缺失。各维度分别描述相同的采样流量，不能彼此相加，也不能与核心全局流量相加。分组统计从所选起点所在整小时开始，可能多含不足一小时。每小时每类保留 100 个标签，超出合并其他；展示保留分组中用量最多 20 项。</p><p className="sub">分组覆盖：{time(view.usage_group_start)} 至 {time(view.usage_group_end)}</p><div className="workspace-table-scroll" tabIndex={0} aria-label="可横向滚动的数据表" role="region"><table className="workspace-table"><thead><tr><th>{({ client: '客户端', rule: '规则', chain: '代理链' })[usageDimension]}</th><th className="workspace-number">上传</th><th className="workspace-number">下载</th><th className="workspace-number">有效差分样本</th></tr></thead><tbody>{(view.usage_groups || []).filter(item => item.dimension === usageDimension).map((item, index) => <tr key={`${item.label}-${index}`}><td>{item.label || '源未提供'}</td><td className="workspace-number">{bytes(item.upload_bytes)}</td><td className="workspace-number">{bytes(item.download_bytes)}</td><td className="workspace-number">{item.samples}</td></tr>)}</tbody></table></div>{!(view.usage_groups || []).some(item => item.dimension === usageDimension) && <Empty>当前时段尚无可归因连接差分；只有全局流量时不推测具体归属。</Empty>}</section>}
       {view && section === 'subscriptions' && <><div className="network-subscriptions">{subscriptions.map(item => <SubscriptionCard key={item.id} item={item} onNodes={() => showNodes(item)} />)}</div>{!subscriptions.length && <Empty>当前来源未提供可显示的订阅。代理提供者为空不代表没有机场订阅；配置文件中的订阅可能由面板另行管理。</Empty>}{admin && <details className="workspace-panel"><summary>导入配置文件订阅元数据</summary><p className="sub">优先在概览配置控制服务，自动读取全部配置订阅。管理层暂不可读时，可导入名称、额度和节点目录。导入不刷新机场、不加载配置，也不会让未检测节点变为在线。</p><p className="sub">最多 100 个订阅、总计 5000 个节点，文件小于 60 KiB。仅接收下列 JSON 元数据结构。请勿选择完整代理配置或含订阅链接、密码、UUID 的面板备份。</p><pre>{'{"subscriptions":[{"id":"my-subscription","name":"订阅名称","active":false,"node_count":0,"usage_state":"unknown"}]}'}</pre><label>选择元数据 JSON<input type="file" accept="application/json,.json" disabled={importing} onChange={event => { void readImport(event.target.files?.[0]); event.currentTarget.value = ''; }} /></label>{importError && <p className="banner error" role="alert">{importError}</p>}{imports && <div><p>待导入 {imports.length} 个订阅：{imports.map(item => item.name).join('、')}</p><Button className="secondary" loading={importing} onClick={importSubscriptions}>确认导入元数据</Button></div>}</details>}</>}
-      {view && section === 'nodes' && <><div className="workspace-table-scroll" tabIndex={0} aria-label="可横向滚动的数据表" role="region"><table className="workspace-table"><thead><tr><th>节点</th><th>订阅归属</th><th>当前证据</th><th className="workspace-number">延迟</th><th className="workspace-time">检测时间</th><th>近 24 小时</th></tr></thead><tbody>{nodes.map(item => <tr key={item.id}><td><strong>{item.name}</strong><small>{item.type || '协议未知'} · {item.loaded ? '核心观测节点' : '目录未关联核心'}</small></td><td>{item.subscriptions?.length ? item.subscriptions.map(entry => entry.name).join('、') : item.subscription_name || subscriptions.find(entry => entry.id === item.subscription_id)?.name || (item.subscription_id ? '已关联订阅' : '未归属订阅')}</td><td><NodeState node={item} /></td><td className="workspace-number">{item.loaded && nodeTone(item.state, item.freshness) === 'healthy' && item.delay_ms !== undefined ? `${item.delay_ms} ms` : '—'}</td><td className="workspace-time">{time(item.checked_at)}</td><td><Button className="text" aria-expanded={node?.id === item.id} onClick={() => setNode(node?.id === item.id ? null : item)}>查看历史<Icon name="history" /></Button></td></tr>)}</tbody></table></div>{!nodes.length && <Empty>当前筛选下没有节点记录。未激活订阅可能尚无可读节点目录，详情见采集覆盖。</Empty>}{node && <section className="workspace-panel"><div className="network-row-head"><div><h2>{node.name}</h2><p className="sub">近 24 小时检测样本与延迟</p></div><Button className="icon-button" aria-label="关闭节点历史" onClick={() => setNode(null)}><Icon name="close" /></Button></div><NodeTimeline samples={view.node_history || []} /><p className="sub">配置目录与核心节点仅在归属可核实时关联；同名不代表同一节点，目录未关联时没有实时检测证据。</p></section>}</>}
+      {view && section === 'nodes' && <><div className="workspace-table-scroll" tabIndex={0} aria-label="可横向滚动的数据表" role="region"><table className="workspace-table network-nodes-table"><thead><tr><th>节点</th><th>订阅归属</th><th>当前证据</th><th className="workspace-number">延迟</th><th className="workspace-time">检测时间</th><th className="network-availability-heading">近 24 小时可用性</th><th>历史</th></tr></thead><tbody>{nodes.map(item => <tr key={item.id}><td data-label="节点"><strong>{item.name}</strong><small>{item.type || '协议未知'} · {item.loaded ? '核心观测节点' : '目录未关联核心'}</small></td><td data-label="订阅归属">{item.subscriptions?.length ? item.subscriptions.map(entry => entry.name).join('、') : item.subscription_name || subscriptions.find(entry => entry.id === item.subscription_id)?.name || (item.subscription_id ? '已关联订阅' : '未归属订阅')}</td><td data-label="当前检测"><NodeState node={item} /></td><td data-label="延迟" className="workspace-number">{item.loaded && nodeTone(item.state, item.freshness) === 'healthy' && item.delay_ms !== undefined ? `${item.delay_ms} ms` : '—'}</td><td data-label="检测时间" className="workspace-time">{time(item.checked_at)}</td><td data-label="近 24 小时可用性"><NodeAvailability node={item} /></td><td data-label="历史"><Button className="text" aria-haspopup="dialog" onClick={() => setNode(item)}><Icon name="history" />历史</Button></td></tr>)}</tbody></table></div>{!nodes.length && <Empty>当前筛选下没有节点记录。未激活订阅可能尚无可读节点目录，详情见采集覆盖。</Empty>}<p className="sub">可用性 = 有效检测成功次数 / 有效检测总次数；状态条每格 15 分钟，灰色表示没有有效样本。采样成功率不等于连续在线时长或 SLA。</p></>}
       {view && section === 'connections' && <><p className="sub">仅当前采样中的活动连接。短连接可能在采样间隔内结束，不是完整访问审计；页面不提供断开连接操作。</p><div className="workspace-table-scroll" tabIndex={0} aria-label="可横向滚动的数据表" role="region"><table className="workspace-table"><thead><tr><th>目标与来源</th><th>规则 / 代理链</th><th className="workspace-number">上传 / 下载</th><th className="workspace-number">当前速率</th><th className="workspace-time">持续时间 / 开始时间</th></tr></thead><tbody>{view.connections?.map(item => <tr key={item.id}><td><strong>{item.host || item.destination || '目的地未提供'}</strong><small>{item.source || '来源未提供'} · {item.network || '协议未知'}</small>{item.process && <small>{item.process}</small>}</td><td>{item.rule || '规则未提供'}<small>{item.chains?.length ? item.chains.join(' → ') : '代理链未提供'}</small></td><td className="workspace-number">↑ {bytes(item.upload_bytes)}<br />↓ {bytes(item.download_bytes)}</td><td className="workspace-number">↑ {rate(item.upload_rate)}<br />↓ {rate(item.download_rate)}</td><td className="workspace-time">{elapsed(item.started_at, view.collected_at)}<small>{time(item.started_at)}</small></td></tr>)}</tbody></table></div>{!view.connections?.length && <Empty>{available('connections') ? '当前采样没有活动连接。' : '连接信息尚未取得，请查看采集来源状态。'}</Empty>}</>}
       {view && section === 'logs' && <><p className="sub">核心日志与采集事件按实际覆盖展示。{view.settings.persist_logs ? `脱敏日志持久保留 ${view.settings.log_retention_hours} 小时，容量上限 ${view.settings.log_limit_mib} MiB。` : '当前未开启日志持久保存；实时缓冲不保证重启后保留。'}</p><ol className="workspace-surface network-logs">{view.logs?.map(item => <li key={item.id}><div><span className={`network-log-level ${['error', 'warning'].includes(item.level) ? 'warning' : ''}`}>{({ error: '错误', warning: '警告', info: '信息', debug: '调试', silent: '静默' } as Record<string, string>)[item.level] || '未分类'}</span><time dateTime={item.at}>{time(item.at)}</time><small>{item.kind === 'collector' ? 'Relay 采集事件' : '核心日志'}</small></div><p>{item.message}</p></li>)}</ol>{!view.logs?.length && <Empty>当前筛选没有日志。请核对日志流状态和覆盖时间，空列表不代表没有发生错误。</Empty>}</>}
-      {view && isList && section !== 'usage' && <div className="workspace-pagination"><span>{view.total} 条匹配记录{loading ? ' · 同步中' : ''}</span><div><Button className="text" disabled={!previous.length || loading} onClick={() => { const stack = [...previous]; setCursor(stack.pop() || ''); setPrevious(stack); }}>上一页</Button><Button className="text" disabled={!view.has_more || !view.next_cursor || loading} onClick={() => { setPrevious(items => [...items, cursor]); setCursor(view.next_cursor || ''); }}>下一页</Button></div></div>}
+      {view && isList && section !== 'usage' && <WorkspacePagination total={view.total} page={previous.length + 1} loading={loading} hasPrevious={previous.length > 0} hasNext={!!view.has_more && !!view.next_cursor} onPrevious={() => { const stack = [...previous]; setCursor(stack.pop() || ''); setPrevious(stack); }} onNext={() => { setPrevious(items => [...items, cursor]); setCursor(view.next_cursor || ''); }} />}
+      </section>
       {view && <Coverage coverage={view.coverage} />}
     </>}
+    {node && <NodeHistory serviceID={serviceID} generation={service.generation} node={node} onClose={() => setNode(null)} onUnauthorized={onUnauthorized} />}
   </div>;
 }

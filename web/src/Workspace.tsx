@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import type { ReactNode } from 'react';
 import { Button, Icon } from './ui';
 import './workspace.css';
@@ -24,4 +25,19 @@ export function WorkspaceMetric({ title, value, note }: {
 
 export function WorkspaceEmpty({ children }: { children: ReactNode }) {
   return <div className="workspace-empty"><Icon name="pulse" /><p>{children}</p></div>;
+}
+
+export function WorkspaceSection({ title, description, children }: { title: string; description: string; children?: ReactNode }) {
+  return <div className="workspace-section-heading"><div><h2>{title}</h2><p>{description}</p></div>{children}</div>;
+}
+
+export function WorkspacePagination({ total, page, loading = false, hasPrevious, hasNext, onPrevious, onNext, label = '列表分页' }: {
+  total: number; page: number; loading?: boolean; hasPrevious: boolean; hasNext: boolean;
+  onPrevious: () => void; onNext: () => void; label?: string;
+}) {
+  const statusID = useId();
+  return <nav className="workspace-pagination" aria-label={label} aria-describedby={statusID}>
+    <span id={statusID} role="status">共 {total} 条 · 第 {page} 页{loading ? ' · 同步中' : ''}</span>
+    <div className="buttons pagination"><Button type="button" className="secondary" disabled={!hasPrevious || loading} onClick={onPrevious}><Icon name="back" />上一页</Button><Button type="button" className="secondary" disabled={!hasNext || loading} onClick={onNext}>下一页<Icon name="next" /></Button></div>
+  </nav>;
 }

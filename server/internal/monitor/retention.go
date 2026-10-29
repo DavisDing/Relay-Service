@@ -177,10 +177,18 @@ func (e *Engine) ConfirmRetention(ctx context.Context, actor, previewID string) 
 	return policy, err
 }
 
-// PruneRetention inspects at most 200 records per bucket per invocation. Resume
-// positions are committed with deletions so restart and transaction failure are
-// safe. A sweep eventually wraps to revisit records which expired afterwards.
+// PruneRetention runs bounded network expiry batches, then scans at most 200
+// records in each history bucket. Resume positions are committed with deletions
+// so restart and transaction failure are safe. Sweeps wrap to revisit new expiry.
 func (e *Engine) PruneRetention(ctx context.Context) error {
+	// Network observations have their own fixed seven-day window, even when
+	// service check/audit retention is indefinite or all mihomo instances pause.
+	if err := e.pruneNetwork(ctx); err != nil {
+		return err
+	}
+	if err := e.pruneUnindexedNetworkHours(ctx); err != nil {
+		return err
+	}
 	return e.store.Update(ctx, func(tx storage.Tx) error {
 		policy, err := readRetention(tx)
 		if err != nil || policy.HistoryDays == 0 && policy.AuditDays == 0 {

@@ -20,6 +20,7 @@ import (
 // Every run owns a random schema; it never drops a database or existing schema.
 func TestPostgresIntegration(t *testing.T) {
 	first, second := postgresIntegrationStores(t)
+	t.Run("exact key scans", func(t *testing.T) { exerciseExactKeyScan(t, first) })
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 

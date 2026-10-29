@@ -33,7 +33,7 @@ const defaults: Form = {
   clear_token: false,
 };
 const pageTitles: Record<string, string> = {
-  services: '服务总览', alerts: '故障与告警', devices: '访问设备',
+  services: '服务监控', alerts: '故障与告警', devices: '访问设备',
   diagnostic: '诊断摘要', settings: '系统设置', network: '网络代理', models: '大模型',
 };
 
@@ -395,7 +395,7 @@ function App() {
           <div className="page-title">
             <span className="eyebrow">OPERATIONS</span>
             <h1 id="workspace-title" tabIndex={-1}>{pageTitles[tab]}</h1>
-            <p className="sub">{tab === 'network' || tab === 'models' ? '自动更新 · 数据时间与覆盖情况见各页' : <>最近同步 {time(tab === 'alerts' ? alertsSynced : servicesSynced)} · 每 60 秒刷新</>}</p>
+            <p className="sub">{tab === 'network' ? '代理流量、订阅与节点质量 · 自动更新' : tab === 'models' ? '模型目录、渠道与调用证据 · 自动更新' : <>最近同步 {time(tab === 'alerts' ? alertsSynced : servicesSynced)} · 每 60 秒刷新</>}</p>
           </div>
           <Button className="secondary refresh-view" disabled={busy} onClick={() => { setNetworkRefresh(value => value + 1); return refresh(); }} aria-label="刷新视图">
             <Icon name="refresh" /><span>刷新视图</span>

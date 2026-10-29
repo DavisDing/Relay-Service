@@ -74,9 +74,16 @@ type mihomoRawSubscription struct {
 }
 
 type mihomoRawProvider struct {
-	Info      *mihomoRawSubscription `json:"subscriptionInfo"`
-	UpdatedAt *time.Time             `json:"updatedAt"`
-	Proxies   []mihomoRawProxy       `json:"proxies"`
+	VehicleType string                 `json:"vehicleType"`
+	Info        *mihomoRawSubscription `json:"subscriptionInfo"`
+	UpdatedAt   *time.Time             `json:"updatedAt"`
+	Proxies     []mihomoRawProxy       `json:"proxies"`
+}
+
+// Compatible/Inline providers are built-in groups or embedded nodes, not
+// external subscription sources. Do not classify them by display name.
+func mihomoSubscriptionProvider(p mihomoRawProvider) bool {
+	return !strings.EqualFold(p.VehicleType, "Compatible") && !strings.EqualFold(p.VehicleType, "Inline")
 }
 
 func mihomoInvalid() error {
@@ -173,13 +180,17 @@ func parseMihomoProviders(body []byte, now time.Time) (*MihomoDetails, map[strin
 	if json.Unmarshal(body, &response) != nil || response.Providers == nil {
 		return nil, nil, nil, mihomoInvalid()
 	}
-	d := &MihomoDetails{Subscriptions: []MihomoSubscription{}, Nodes: []MihomoNode{}, ProxySourceState: "not_collected", SubscriptionCount: len(response.Providers)}
+	d := &MihomoDetails{Subscriptions: []MihomoSubscription{}, Nodes: []MihomoNode{}, ProxySourceState: "not_collected"}
 	seen, names := map[string]bool{}, map[string]bool{}
 	for _, name := range mihomoSortedKeys(response.Providers) {
 		if !safeName(name) {
 			return nil, nil, nil, mihomoInvalid()
 		}
 		provider := response.Providers[name]
+		if !mihomoSubscriptionProvider(provider) {
+			continue
+		}
+		d.SubscriptionCount++
 		sub, err := mihomoProjectSubscription(name, provider, now)
 		if err != nil {
 			return nil, nil, nil, err

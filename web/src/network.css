@@ -4,6 +4,19 @@
 .network-mini-grid { grid-template-columns: repeat(4,minmax(0,1fr)); }
 .network-inventory-counts { grid-template-columns: repeat(5,minmax(0,1fr)); }
 .network-subscriptions { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 1rem; }
+.network-subscription { background: var(--surface-solid); box-shadow: none; }
+.network-availability { min-width: 11rem; max-width: 17rem; }
+.network-availability strong { font-variant-numeric: tabular-nums; }
+.workspace-table .network-availability small { margin-top: .25rem; }
+.network-availability-bars { display: flex; gap: 1px; height: .875rem; margin-top: .5rem; }
+.network-availability-bars span { flex: 1; min-width: 0; background: var(--surface-muted); border-radius: 1px; }
+.network-availability-bars .healthy { background: var(--success); }
+.network-availability-bars .unhealthy { background: var(--danger); }
+.network-history-dialog { width: min(62rem,calc(100vw - 2rem)); max-width: 100%; }
+.network-history-dialog > .section-head { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: start; gap: .75rem; margin-bottom: 0; }
+.network-history-dialog > .section-head h2 { margin: 0; overflow-wrap: anywhere; }
+.network-history-dialog > .section-head .sub { margin: .5rem 0 0; }
+.network-history-range { max-width: 16rem; margin: 0; }
 .network-row-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 1rem; }
 .network-row-head > div { min-width: 0; }
 .network-row-head h3 { font-size: 1.0625rem; margin: 0; overflow-wrap: anywhere; }
@@ -67,6 +80,19 @@
   .network-chart-legend small { margin-left: 0; flex-basis: 100%; }
   .network-chart-axis { flex-wrap: wrap; gap: .5rem; }
   .network-row-head > select { width: 100%; }
+  .network-nodes-table,.network-nodes-table tbody { display: block; }
+  .network-nodes-table thead { display: none; }
+  .network-nodes-table tr { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .875rem 1rem; position: relative; padding: 1.25rem 0; border-bottom: 1px solid var(--line-soft); }
+  .network-nodes-table tr:last-child { border-bottom: 0; }
+  .network-nodes-table td { display: block; min-width: 0; max-width: none; padding: 0; border: 0; text-align: left; white-space: normal; }
+  .network-nodes-table td:is(.workspace-time,.workspace-number) { text-align: left; white-space: normal; }
+  .network-nodes-table td::before { content: attr(data-label); display: block; font-size: var(--workspace-caption); color: var(--text-secondary); margin-bottom: .375rem; }
+  .network-nodes-table td:is(:first-child,:nth-child(2),:nth-child(5),:nth-child(6)) { grid-column: 1 / -1; }
+  .network-nodes-table td:first-child { padding-right: 5rem; }
+  .network-nodes-table td:first-child::before,.network-nodes-table td:last-child::before { display: none; }
+  .network-nodes-table td:last-child { position: absolute; top: 1rem; right: 0; }
+  .network-availability { max-width: none; min-width: 0; }
+  .network-availability-bars { height: 1.125rem; }
 }
 @media (prefers-contrast:more) {
   .network-notice,.network-logs li { border-color: var(--text-secondary); }

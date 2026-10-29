@@ -22,6 +22,7 @@ func TestSQLiteStorageContracts(t *testing.T) {
 	}
 	exerciseDataVersion(t, s)
 	exerciseRetentionCount(t, s)
+	exerciseExactKeyScan(t, s)
 	if err := s.Update(ctx, func(tx Tx) error {
 		return tx.Put("persistent", "账号", map[string]any{"number": 9007199254740993, "secret": "ciphertext"})
 	}); err != nil {

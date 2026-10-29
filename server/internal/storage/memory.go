@@ -141,8 +141,20 @@ func (t *memoryTx) Scan(bucket string, options Scan) ([]Record, error) {
 	if err := t.ctx.Err(); err != nil {
 		return nil, err
 	}
-	keys := make([]string, 0, len(t.buckets[bucket]))
-	for key := range t.buckets[bucket] {
+	if len(options.Keys) > 500 {
+		return nil, fmt.Errorf("too many scan keys")
+	}
+	candidates := t.buckets[bucket]
+	if options.Keys != nil {
+		candidates = make(map[string]json.RawMessage, len(options.Keys))
+		for _, key := range options.Keys {
+			if raw, ok := t.buckets[bucket][key]; ok {
+				candidates[key] = raw
+			}
+		}
+	}
+	keys := make([]string, 0, len(candidates))
+	for key := range candidates {
 		if options.Prefix != "" && !strings.HasPrefix(key, options.Prefix) {
 			continue
 		}

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -244,6 +245,9 @@ func (t *sqliteTx) Scan(bucket string, o Scan) ([]Record, error) {
 	if err := validIdentity(bucket, "scan"); err != nil {
 		return nil, err
 	}
+	if len(o.Keys) > 500 {
+		return nil, fmt.Errorf("too many scan keys")
+	}
 	limit := o.Limit
 	if limit <= 0 {
 		limit = 100
@@ -253,6 +257,15 @@ func (t *sqliteTx) Scan(bucket string, o Scan) ([]Record, error) {
 	}
 	query := "SELECT record_key,value FROM relay_records WHERE bucket=?"
 	args := []any{bucket}
+	if o.Keys != nil {
+		if len(o.Keys) == 0 {
+			return []Record{}, nil
+		}
+		query += " AND record_key IN (" + strings.TrimSuffix(strings.Repeat("?,", len(o.Keys)), ",") + ")"
+		for _, key := range o.Keys {
+			args = append(args, key)
+		}
+	}
 	if o.Prefix != "" {
 		query += " AND substr(record_key,1,length(?))=?"
 		args = append(args, o.Prefix, o.Prefix)

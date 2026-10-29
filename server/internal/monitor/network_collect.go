@@ -312,6 +312,7 @@ func (w *networkWorker) applyInventory(providerBody []byte, providerErr error, p
 	// /proxies keys are unique within this core. Providers describe membership,
 	// never a second identity or an alternative source of current health.
 	byName := map[string]int{}
+	groupNames := map[string]bool{}
 	if proxyErr == nil {
 		var input struct {
 			Proxies map[string]mihomoRawProxy `json:"proxies"`
@@ -322,6 +323,9 @@ func (w *networkWorker) applyInventory(providerBody []byte, providerErr error, p
 			for _, name := range mihomoSortedKeys(input.Proxies) {
 				raw := input.Proxies[name]
 				raw.Name = name
+				if mihomoNonNode(raw) {
+					groupNames[name] = true
+				}
 				if n, ok := networkProjectNode(raw, "", token, now); ok {
 					if len(nodes) >= networkItemLimit {
 						w.view.Coverage.Truncated = true
@@ -345,6 +349,9 @@ func (w *networkWorker) applyInventory(providerBody []byte, providerErr error, p
 					continue
 				}
 				p := input.Providers[name]
+				if !mihomoSubscriptionProvider(p) || p.VehicleType == "" && groupNames[name] {
+					continue
+				}
 				id := networkID("provider", name)
 				projected, err := mihomoProjectSubscription(name, p, now)
 				if err != nil {

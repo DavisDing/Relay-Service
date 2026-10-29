@@ -13,7 +13,7 @@ const networkNodeBucket = "network.nodes"
 const networkLogsBucket = "network.logs"
 const networkExpiryBucket = "network.expiry"
 const networkItemLimit = 5000
-const networkNodeIdentityVersion = 2
+const networkNodeIdentityVersion = 3
 
 type NetworkQuery struct {
 	Section, Cursor, Q, Subscription, State, Node string
@@ -64,6 +64,19 @@ type NetworkNode struct {
 	CheckedAt        *time.Time                `json:"checked_at,omitempty"`
 	Freshness        string                    `json:"freshness"`
 	Loaded           bool                      `json:"loaded"`
+	Availability24H  *NetworkAvailability      `json:"availability_24h,omitempty"`
+}
+
+// Availability is a ratio of distinct valid source checks, not continuous
+// uptime. Empty intervals remain unknown, and never enter the denominator.
+type NetworkAvailability struct {
+	StartAt          time.Time `json:"start_at"`
+	EndAt            time.Time `json:"end_at"`
+	Success          int       `json:"success"`
+	Failure          int       `json:"failure"`
+	SuccessRate      *float64  `json:"success_rate,omitempty"`
+	CoveredIntervals int       `json:"covered_intervals"`
+	Intervals        []string  `json:"intervals"`
 }
 type NetworkNodeSubscription struct {
 	ID   string `json:"id"`

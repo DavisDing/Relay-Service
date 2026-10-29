@@ -322,10 +322,11 @@ func (e *Engine) NetworkView(ctx context.Context, id string, q NetworkQuery) (Ne
 			if getErr == nil && cached.Generation == rec.Service.Generation && cached.SettingsRevision == saved.Revision {
 				out = cached
 				if cached.NodeIdentityVersion < networkNodeIdentityVersion {
-					// Old snapshots count provider memberships as physical nodes.
-					// Do not present those observations as canonical core evidence.
+					// Old snapshots contain obsolete node identities or group-based
+					// subscriptions. Refresh inventory without deleting saved history.
 					out.Nodes = []NetworkNode{}
-					out.Coverage.Notes = append(out.Coverage.Notes, "旧节点身份快照已失效，等待核心重新采集；新身份历史从本次接入起记录。")
+					out.Subscriptions = []NetworkSubscription{}
+					out.Coverage.Notes = append(out.Coverage.Notes, "节点与订阅快照需重新采集；已有历史按原身份保留至到期。")
 				}
 				out.Settings = saved.Settings
 				out.State = "stale"
@@ -434,6 +435,9 @@ func (e *Engine) NetworkView(ctx context.Context, id string, q NetworkQuery) (Ne
 		out.Nodes = filtered
 		out.Total = len(filtered)
 		out.Nodes = networkPage(filtered, offset, q.Limit)
+		if err := e.readNetworkAvailability(ctx, id, saved.HistoryGeneration, out.Nodes); err != nil {
+			return out, err
+		}
 	case "subscriptions":
 		filtered := []NetworkSubscription{}
 		for _, s := range out.Subscriptions {
@@ -529,10 +533,17 @@ func (e *Engine) readNetworkHistory(ctx context.Context, id string, generation i
 			}
 		}
 		if q.Section == "nodes" {
+			keys := []string{}
 			for at := start; !at.After(now); at = at.Add(time.Hour) {
+				keys = append(keys, networkHourKey(id, generation, at)+"/"+q.Node)
+			}
+			rows, err := tx.Scan(networkNodeBucket, storage.Scan{Keys: keys, Limit: 500})
+			if err != nil {
+				return err
+			}
+			for _, record := range rows {
 				var row networkHourNodes
-				err := tx.Get(networkNodeBucket, networkHourKey(id, generation, at)+"/"+q.Node, &row)
-				if err != nil && !errors.Is(err, storage.ErrNotFound) {
+				if err := json.Unmarshal(record.Value, &row); err != nil {
 					return err
 				}
 				for _, n := range row.Items {

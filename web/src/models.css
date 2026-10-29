@@ -1,10 +1,12 @@
 /* Model-specific layouts; common controls and surfaces live in workspace.css. */
 .models-evidence-levels { display: flex; flex-wrap: wrap; gap: .5rem; margin: 1rem 0; }
 .models-evidence-levels span { padding: .5rem .75rem; border-radius: .5rem; background: var(--surface-muted); font-size: var(--workspace-caption); color: var(--text-secondary); }
-.models-list,.models-source-list { display: grid; gap: 1rem; }
+.models-list,.models-source-list { display: grid; gap: 0; }
+.models-list > .models-entry { border: 0; border-radius: 0; box-shadow: none; border-bottom: 1px solid var(--line-soft); }
+.models-list > .models-entry:last-child { border-bottom: 0; }
 .models-entry { overflow: hidden; }
 .data-workspace .models-entry > summary:focus-visible { outline-offset: -3px; }
-.models-entry > summary { display: grid; grid-template-columns: minmax(0,2fr) minmax(0,1fr) minmax(0,.7fr) minmax(0,1.5fr) 1.25rem; gap: 1rem; padding: 1rem 1.5rem; align-items: center; list-style: none; }
+.models-entry > summary { display: grid; grid-template-columns: minmax(0,2fr) minmax(0,1fr) minmax(0,.7fr) minmax(0,1.5fr) 1.25rem; gap: 1rem; padding: 1rem .25rem; align-items: center; list-style: none; }
 .models-entry > summary::-webkit-details-marker,.models-source > summary::-webkit-details-marker { display: none; }
 .models-entry > summary > div { min-width: 0; display: grid; gap: .5rem; }
 .models-entry-name strong { font-size: var(--workspace-body); font-weight: 600; overflow-wrap: anywhere; }
@@ -13,7 +15,7 @@
 .models-entry > summary > .icon,.models-source > summary > .icon { width: 1.125rem; height: 1.125rem; color: var(--text-secondary); transition: transform .16s ease; }
 .models-entry[open] > summary > .icon,.models-source[open] > summary > .icon { transform: rotate(90deg); }
 .models-entry[open] > summary { border-bottom: 1px solid var(--line-soft); }
-.models-entry-body { padding: .5rem 1.5rem 1.5rem; }
+.models-entry-body { padding: .5rem .25rem 1.25rem; }
 .models-entry-body h3 { font-size: var(--workspace-body); font-weight: 600; margin: 1.5rem 0 1rem; }
 .models-inline-details { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--line-soft); }
 .models-inline-details > summary { font-size: var(--workspace-caption); color: var(--text-secondary); }

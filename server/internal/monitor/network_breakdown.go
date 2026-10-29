@@ -118,7 +118,7 @@ func (w *networkWorker) flushNetworkBreakdown(tx storage.Tx, id string, generati
 		if err := tx.Put(networkBreakdownBucket, key, stored); err != nil {
 			return err
 		}
-		if err := networkPutExpiry(tx, networkBreakdownBucket, key, at.Add(169*time.Hour)); err != nil {
+		if err := networkPutExpiry(tx, networkBreakdownBucket, key, networkHourExpires(at)); err != nil {
 			return err
 		}
 	}

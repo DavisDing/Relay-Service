@@ -321,6 +321,9 @@ func (t *postgresTx) Scan(bucket string, options Scan) ([]Record, error) {
 	if err := validIdentity(bucket, "scan"); err != nil {
 		return nil, err
 	}
+	if len(options.Keys) > 500 {
+		return nil, fmt.Errorf("too many scan keys")
+	}
 	limit := options.Limit
 	if limit <= 0 {
 		limit = 100
@@ -335,6 +338,18 @@ func (t *postgresTx) Scan(bucket string, options Scan) ([]Record, error) {
 	query := "SELECT record_key, value FROM relay_records WHERE bucket=$1"
 	args := []any{bucket}
 	n := 2
+	if options.Keys != nil {
+		if len(options.Keys) == 0 {
+			return []Record{}, nil
+		}
+		placeholders := make([]string, len(options.Keys))
+		for i, key := range options.Keys {
+			placeholders[i] = fmt.Sprintf("$%d", n)
+			args = append(args, key)
+			n++
+		}
+		query += " AND record_key IN (" + strings.Join(placeholders, ",") + ")"
+	}
 	if options.Prefix != "" {
 		query += fmt.Sprintf(" AND left(record_key, length($%d))=$%d", n, n)
 		args = append(args, options.Prefix)
