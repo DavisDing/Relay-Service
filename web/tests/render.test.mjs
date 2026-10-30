@@ -240,7 +240,24 @@ test('mihomo quota and existing node history preserve stale evidence labels', ()
 });
 
 const { WorkspacePagination } = load('Workspace.tsx');
-const { NodeAvailability } = load('NetworkProxy.tsx');
+const { NodeAvailability, SubscriptionCard, NodeSubscription } = load('NetworkProxy.tsx');
+test('node membership shows merged profile names and labels unmatched core evidence explicitly', () => {
+  const membership = (node, subscriptions = []) => renderToStaticMarkup(React.createElement(NodeSubscription, { node, subscriptions }));
+  assert.equal(membership({ subscriptions: [{ id: 'provider', name: 'provider' }, { id: 'profile', name: 'start' }] }), 'provider、start');
+  assert.equal(membership({ loaded: true }), '核心节点 · 归属待确认');
+  assert.equal(membership({ subscription_id: 'profile' }, [{ id: 'profile', name: '1' }]), '1');
+});
+test('subscription expiry distinguishes unlimited duration from missing data and dated plans', () => {
+  const card = expire => renderToStaticMarkup(React.createElement(SubscriptionCard, {
+    item: { id: 'profile', name: 'plan', source: 'control', usage_state: 'available', expire_seconds: expire }, onNodes: noop,
+  }));
+  assert.match(card(0), /<dt>到期<\/dt><dd>不限时<\/dd>/);
+  assert.match(card(undefined), /到期信息未知/);
+  assert.doesNotMatch(card(undefined), /不限时/);
+  const dated = card(Date.parse('2031-12-04T00:00:00Z') / 1000);
+  assert.match(dated, /2031/);
+  assert.doesNotMatch(dated, /不限时|到期信息未知|未提供/);
+});
 test('workspace pagination shares secondary controls and explicit disabled boundaries', () => {
   const html = renderToStaticMarkup(React.createElement(WorkspacePagination, {
     total: 25, page: 1, hasPrevious: false, hasNext: false, onPrevious: noop, onNext: noop,

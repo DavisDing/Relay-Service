@@ -313,6 +313,7 @@ func (w *networkWorker) applyInventory(providerBody []byte, providerErr error, p
 	// never a second identity or an alternative source of current health.
 	byName := map[string]int{}
 	groupNames := map[string]bool{}
+	catalogIDs := []string{}
 	if proxyErr == nil {
 		var input struct {
 			Proxies map[string]mihomoRawProxy `json:"proxies"`
@@ -333,6 +334,7 @@ func (w *networkWorker) applyInventory(providerBody []byte, providerErr error, p
 					}
 					byName[name] = len(nodes)
 					nodes = append(nodes, n)
+					catalogIDs = append(catalogIDs, name, raw.Type, raw.ID)
 				}
 			}
 		}
@@ -400,14 +402,77 @@ func (w *networkWorker) applyInventory(providerBody []byte, providerErr error, p
 	}
 	w.coreSubs = subs
 	w.coreNodes = nodes
+	w.coreCatalogStamp = networkID(catalogIDs...)
 	w.rebuildNetworkInventory(now)
 }
 func (w *networkWorker) rebuildNetworkInventory(now time.Time) {
 	subs := append([]NetworkSubscription{}, w.coreSubs...)
 	subs = append(subs, w.profileSubs...)
 	subs = append(subs, w.settings.ImportedSubscriptions...)
-	nodes := append([]NetworkNode{}, w.coreNodes...)
+	// Within the explicitly configured control/core pair, only a single active
+	// profile with a complete current directory may supply profile membership.
+	// Names remain case-sensitive; protocol spelling differs between YAML and
+	// the core API. The core row/ID/history remains the canonical observation.
+	activeProfile := ""
+	activeNodeCount := 0
+	activeCount := 0
+	profileNames := map[string]string{}
+	for _, sub := range w.profileSubs {
+		profileNames[sub.ID] = sub.Name
+		if sub.Source == "control" && sub.Active {
+			activeCount++
+			if sub.NodeCountKnown {
+				activeProfile = sub.ID
+				activeNodeCount = sub.NodeCount
+			}
+		}
+	}
+	if activeCount != 1 || w.view.Coverage.SourceStates["profiles"] != "available" || w.profilesFetched.IsZero() || now.Before(w.profilesFetched) || now.Sub(w.profilesFetched) > 5*time.Minute || w.coreCatalogStamp != w.profilesCoreStamp {
+		activeProfile = ""
+	}
+	nodes := make([]NetworkNode, 0, len(w.coreNodes)+len(w.profileNodes))
+	coreIndex := map[string]int{}
+	for _, core := range w.coreNodes {
+		core.Subscriptions = append([]NetworkNodeSubscription{}, core.Subscriptions...)
+		coreIndex[networkNodeMatchKey(core.Name, core.Type)] = len(nodes)
+		nodes = append(nodes, core)
+	}
+	// Require the entire active directory to match. A partial name overlap is
+	// insufficient evidence that this is the profile currently used by the core.
+	matched := 0
+	for _, directory := range w.profileNodes {
+		if activeProfile != "" && directory.SubscriptionID == activeProfile {
+			if _, ok := coreIndex[networkNodeMatchKey(directory.Name, directory.Type)]; !ok {
+				activeProfile = ""
+				break
+			}
+			matched++
+		}
+	}
+	if matched == 0 || matched != activeNodeCount {
+		activeProfile = ""
+	}
+	if len(w.profileSubs) > 0 {
+		w.view.Coverage.SourceStates["profile_membership"] = "unknown"
+		if activeProfile != "" {
+			w.view.Coverage.SourceStates["profile_membership"] = "available"
+		}
+	} else {
+		delete(w.view.Coverage.SourceStates, "profile_membership")
+	}
 	for _, profileNode := range w.profileNodes {
+		if activeProfile != "" && profileNode.SubscriptionID == activeProfile {
+			if index, ok := coreIndex[networkNodeMatchKey(profileNode.Name, profileNode.Type)]; ok {
+				if !networkNodeHasSubscription(nodes[index], profileNode.SubscriptionID) {
+					nodes[index].Subscriptions = append(nodes[index].Subscriptions, NetworkNodeSubscription{ID: profileNode.SubscriptionID, Name: profileNames[profileNode.SubscriptionID]})
+				}
+				if nodes[index].SubscriptionID == "" {
+					nodes[index].SubscriptionID = profileNode.SubscriptionID
+					nodes[index].SubscriptionName = profileNames[profileNode.SubscriptionID]
+				}
+				continue
+			}
+		}
 		nodes = append(nodes, profileNode)
 	}
 
@@ -453,6 +518,31 @@ func (w *networkWorker) rebuildNetworkInventory(now time.Time) {
 		}
 	}
 	sort.Slice(w.view.Nodes, func(i, j int) bool { return w.view.Nodes[i].Name < w.view.Nodes[j].Name })
+}
+
+func networkNodeMatchKey(name, kind string) string {
+	kind = strings.ToLower(strings.ReplaceAll(kind, "-", ""))
+	switch kind {
+	case "ss":
+		kind = "shadowsocks"
+	case "ssr":
+		kind = "shadowsocksr"
+	case "socks":
+		kind = "socks5"
+	}
+	return name + "\x00" + kind
+}
+
+func networkNodeHasSubscription(node NetworkNode, id string) bool {
+	if node.SubscriptionID == id {
+		return true
+	}
+	for _, sub := range node.Subscriptions {
+		if sub.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func networkProjectNode(raw mihomoRawProxy, subscription, token string, now time.Time) (NetworkNode, bool) {

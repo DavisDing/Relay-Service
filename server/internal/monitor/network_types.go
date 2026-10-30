@@ -213,7 +213,10 @@ type networkWorker struct {
 	profileSubs       []NetworkSubscription
 	profileNodes      []NetworkNode
 	profilesFetched   time.Time
+	profileQueue      []string
 	profileCursor     int
+	coreCatalogStamp  string
+	profilesCoreStamp string
 }
 type networkCounters struct {
 	up, down int64

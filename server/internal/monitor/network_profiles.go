@@ -3,6 +3,7 @@ package monitor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/url"
 	"strings"
@@ -25,6 +26,7 @@ func (e *Engine) pollNetworkProfiles(ctx context.Context, w *networkWorker) {
 		w.mu.Lock()
 		w.view.Coverage.SourceStates["profiles"] = "not_configured"
 		w.view.Coverage.Notes = networkNote(w.view.Coverage.Notes, "配置文件订阅需要独立的MetaCubeXD控制API地址/CONTROL_TOKEN；核心secret不用于控制层。")
+		w.rebuildNetworkInventory(e.now())
 		w.mu.Unlock()
 		return
 	}
@@ -32,12 +34,14 @@ func (e *Engine) pollNetworkProfiles(ctx context.Context, w *networkWorker) {
 	if err != nil {
 		w.mu.Lock()
 		w.view.Coverage.SourceStates["profiles"] = "credential_invalid"
+		w.profileCollectionNote("配置文件订阅采集：", "控制服务地址或已保存的凭据无法读取；请核对地址并重新保存独立的控制令牌。")
+		w.rebuildNetworkInventory(e.now())
 		w.mu.Unlock()
 		return
 	}
 	defer closeClient()
 	w.mu.RLock()
-	refresh := w.profilesFetched.IsZero() || e.now().Sub(w.profilesFetched) >= 5*time.Minute && w.profileCursor >= len(w.profileSubs)
+	refresh := w.profilesFetched.IsZero() || e.now().Sub(w.profilesFetched) >= 5*time.Minute || w.coreCatalogStamp != w.profilesCoreStamp
 	w.mu.RUnlock()
 	if refresh {
 		timeout, cancel := context.WithTimeout(ctx, 8*time.Second)
@@ -46,14 +50,16 @@ func (e *Engine) pollNetworkProfiles(ctx context.Context, w *networkWorker) {
 		cancel()
 		if err != nil {
 			w.mu.Lock()
-			w.view.Coverage.SourceStates["profiles"] = "unavailable"
-			w.view.Coverage.Notes = networkNote(w.view.Coverage.Notes, "配置文件目录与核心节点缺少可验证身份映射，分别展示；未将同名节点健康借给订阅。")
+			state, note := networkProfileFailure(err, token)
+			w.view.Coverage.SourceStates["profiles"] = state
+			w.view.Coverage.Notes = networkNote(w.view.Coverage.Notes, "当前激活配置通过完整节点目录核对后关联核心检测；未激活或归属待确认的目录不继承检测记录。")
 			w.rebuildNetworkInventory(e.now())
-			w.view.Coverage.Notes = networkNote(w.view.Coverage.Notes, "配置文件订阅采集不可用，请核对控制API地址与独立令牌。")
+			w.profileCollectionNote("配置文件订阅采集：", note)
 			w.mu.Unlock()
 			return
 		}
 		subs := []NetworkSubscription{}
+		seen := map[string]bool{}
 		for _, meta := range metas {
 			if meta.Type != "local" && meta.Type != "remote" {
 				continue
@@ -61,6 +67,10 @@ func (e *Engine) pollNetworkProfiles(ctx context.Context, w *networkWorker) {
 			if !networkProfileID(meta.ID) || !networkLabel(meta.Name) || networkReflected(meta.Name, token) || networkReflected(meta.ID, token) {
 				continue
 			}
+			if seen[meta.ID] {
+				continue
+			}
+			seen[meta.ID] = true
 			w.mu.RLock()
 			reflected := w.networkSensitive(meta.ID) || w.networkSensitive(meta.Name)
 			w.mu.RUnlock()
@@ -109,10 +119,34 @@ func (e *Engine) pollNetworkProfiles(ctx context.Context, w *networkWorker) {
 			}
 		}
 		w.profileNodes = keptNodes
+		// Keep unfinished detail requests ahead of a new sweep, independently of
+		// list refreshes or upstream reordering. Large catalogs cannot delay new
+		// subscription discovery or starve the later profiles of detail reads.
+		queue := []string{}
+		queued := map[string]bool{}
+		current := map[string]bool{}
+		for _, sub := range subs {
+			current[sub.ID] = true
+		}
+		for _, id := range w.profileQueue[w.profileCursor:] {
+			if current[id] {
+				queue = append(queue, id)
+				queued[id] = true
+			}
+		}
+		for _, sub := range subs {
+			if !queued[sub.ID] {
+				queue = append(queue, sub.ID)
+			}
+		}
+		w.profileQueue = queue
 		w.profileCursor = 0
 		w.profilesFetched = e.now()
+		w.profilesCoreStamp = w.coreCatalogStamp
 		w.view.Coverage.SourceStates["profiles"] = "available"
+		w.profileCollectionNote("配置文件订阅采集：", "")
 		w.view.Coverage.SourceStates["profile_nodes"] = "collecting"
+		w.profileCollectionNote("配置文件节点采集：", "")
 		if len(subs) == 0 {
 			w.view.Coverage.SourceStates["profile_nodes"] = "available"
 		}
@@ -120,7 +154,7 @@ func (e *Engine) pollNetworkProfiles(ctx context.Context, w *networkWorker) {
 			w.view.Coverage.Truncated = true
 			w.view.Coverage.Notes = networkNote(w.view.Coverage.Notes, "配置文件清单超过100项，本轮未完整覆盖。")
 		}
-		w.view.Coverage.Notes = networkNote(w.view.Coverage.Notes, "配置文件目录与核心节点缺少可验证身份映射，分别展示；未将同名节点健康借给订阅。")
+		w.view.Coverage.Notes = networkNote(w.view.Coverage.Notes, "当前激活配置通过完整节点目录核对后关联核心检测；未激活或归属待确认的目录不继承检测记录。")
 		w.rebuildNetworkInventory(e.now())
 		w.mu.Unlock()
 	}
@@ -129,11 +163,15 @@ func (e *Engine) pollNetworkProfiles(ctx context.Context, w *networkWorker) {
 	for i := 0; i < 4; i++ {
 		w.mu.RLock()
 		cursor := w.profileCursor
-		if cursor >= len(w.profileSubs) {
+		if cursor >= len(w.profileQueue) {
 			w.mu.RUnlock()
 			break
 		}
-		sub := w.profileSubs[cursor]
+		subIndex := 0
+		for w.profileSubs[subIndex].ID != w.profileQueue[cursor] {
+			subIndex++
+		}
+		sub := w.profileSubs[subIndex]
 		w.mu.RUnlock()
 		rawID := strings.TrimPrefix(sub.ID, "profile-")
 		timeout, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -149,7 +187,7 @@ func (e *Engine) pollNetworkProfiles(ctx context.Context, w *networkWorker) {
 					Meta    networkProfileMeta `json:"meta"`
 					Content string             `json:"content"`
 				}
-				if json.Unmarshal(body, &detail) != nil || detail.Meta.ID != rawID {
+				if json.Unmarshal(body, &detail) != nil || detail.Meta.ID != rawID || sub.UpdatedAt != nil && !sub.UpdatedAt.Equal(time.UnixMilli(detail.Meta.UpdatedAt)) {
 					err = ErrValidation
 				} else {
 					nodes, err = parseNetworkProfileNodes(detail.Content, sub.ID, token)
@@ -174,21 +212,58 @@ func (e *Engine) pollNetworkProfiles(ctx context.Context, w *networkWorker) {
 				w.view.Coverage.SourceStates["profile_nodes"] = "partial"
 			}
 			w.profileNodes = append(w.profileNodes, nodes...)
-			w.profileSubs[cursor].NodeCount = len(nodes)
-			w.profileSubs[cursor].NodeCountKnown = complete
+			w.profileSubs[subIndex].NodeCount = len(nodes)
+			w.profileSubs[subIndex].NodeCountKnown = complete
 		} else {
-			w.view.Coverage.SourceStates["profile_nodes"] = "partial"
-			w.view.Coverage.Notes = networkNote(w.view.Coverage.Notes, "部分订阅节点目录无法读取或含不支持的YAML结构；未激活节点没有实时延迟。")
+			// Retain safe last-known directory rows, but never use an unreadable
+			// or changed detail to establish current core membership.
+			w.profileSubs[subIndex].NodeCountKnown = false
+			state, note := networkProfileFailure(err, token)
+			if state != "unauthorized" {
+				state = "partial"
+			}
+			w.view.Coverage.SourceStates["profile_nodes"] = state
+			w.profileCollectionNote("配置文件节点采集：", note)
 		}
 		w.profileCursor++
-		if w.profileCursor == len(w.profileSubs) && w.view.Coverage.SourceStates["profile_nodes"] == "collecting" {
+		if w.profileCursor == len(w.profileQueue) && w.view.Coverage.SourceStates["profile_nodes"] == "collecting" {
 			w.view.Coverage.SourceStates["profile_nodes"] = "available"
 		}
-		w.view.Coverage.Notes = networkNote(w.view.Coverage.Notes, "配置文件目录与核心节点缺少可验证身份映射，分别展示；未将同名节点健康借给订阅。")
+		w.view.Coverage.Notes = networkNote(w.view.Coverage.Notes, "当前激活配置通过完整节点目录核对后关联核心检测；未激活或归属待确认的目录不继承检测记录。")
 		w.rebuildNetworkInventory(e.now())
 		w.mu.Unlock()
 	}
 }
+
+func networkProfileFailure(err error, token string) (string, string) {
+	var failure *FetchError
+	if errors.As(err, &failure) && failure.Status == StatusUnauthorized {
+		if token == "" {
+			return "unauthorized", "控制接口要求认证；请在后台采集设置中填写独立的 CONTROL_TOKEN 并保存，核心 secret 不能替代。"
+		}
+		return "unauthorized", "控制接口拒绝了已配置的令牌或权限；请核对独立的 CONTROL_TOKEN 及反向代理认证。"
+	}
+	if errors.Is(err, ErrValidation) {
+		return "invalid_response", "响应超出限制或含不支持的配置结构；节点目录只读取顶层 proxies，provider 引用不会下载。"
+	}
+	return "unavailable", "控制接口暂不可读或响应格式不支持；请核对控制服务地址、接口支持情况与网络。"
+}
+
+// Replace the current diagnostic for a source so recovered authentication
+// failures do not remain visible alongside successful collection.
+func (w *networkWorker) profileCollectionNote(prefix, note string) {
+	kept := w.view.Coverage.Notes[:0]
+	for _, existing := range w.view.Coverage.Notes {
+		if !strings.HasPrefix(existing, prefix) {
+			kept = append(kept, existing)
+		}
+	}
+	w.view.Coverage.Notes = kept
+	if note != "" {
+		w.view.Coverage.Notes = networkNote(kept, prefix+note)
+	}
+}
+
 func networkProfileID(id string) bool {
 	if id == "" || len(id) > 128 {
 		return false
