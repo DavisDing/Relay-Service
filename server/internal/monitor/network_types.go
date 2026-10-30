@@ -215,6 +215,8 @@ type networkWorker struct {
 	profilesFetched   time.Time
 	profileQueue      []string
 	profileCursor     int
+	coreCatalogStamp  string
+	profilesCoreStamp string
 }
 type networkCounters struct {
 	up, down int64

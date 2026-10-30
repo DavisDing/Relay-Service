@@ -63,7 +63,14 @@ func (f *profileControlFixture) ServeHTTP(w http.ResponseWriter, r *http.Request
 	if !ok {
 		content = "proxies: [{name: 节点, type: anytls}]"
 	}
-	json.NewEncoder(w).Encode(map[string]any{"meta": networkProfileMeta{ID: id}, "content": content})
+	meta := networkProfileMeta{ID: id}
+	for _, candidate := range f.metas {
+		if candidate.ID == id {
+			meta = candidate
+			break
+		}
+	}
+	json.NewEncoder(w).Encode(map[string]any{"meta": meta, "content": content})
 }
 
 func newProfileControlTest(t *testing.T) (*Engine, *networkWorker, *profileControlFixture) {
@@ -235,6 +242,57 @@ func TestNetworkProfilesMissingTokenAndDetailAuth(t *testing.T) {
 	e.pollNetworkProfiles(context.Background(), w)
 	if w.view.Coverage.SourceStates["profiles"] != "unavailable" || len(w.view.Subscriptions) != 1 || len(w.view.Nodes) != 1 || strings.Contains(strings.Join(w.view.Coverage.Notes, " "), "控制接口要求认证") {
 		t.Fatal("temporary failure erased catalog or was misclassified as authentication")
+	}
+}
+
+func TestNetworkProfileMembershipRefreshesAfterCoreReloadAndDropsOnAuthFailure(t *testing.T) {
+	e, w, f := newProfileControlTest(t)
+	now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+	e.now = func() time.Time { return now }
+	f.metas = []networkProfileMeta{
+		{ID: "a", Name: "start", Type: "remote", Active: true, UpdatedAt: now.UnixMilli()},
+		{ID: "b", Name: "1", Type: "remote", UpdatedAt: now.UnixMilli()},
+	}
+	f.details["a"] = "proxies: [{name: same, type: ss}]"
+	f.details["b"] = "proxies: [{name: same, type: ss}]"
+	core := func(id string) []byte {
+		return []byte(fmt.Sprintf(`{"proxies":{"same":{"id":%q,"type":"Shadowsocks","history":[{"time":"2026-10-30T00:00:00Z","delay":17}]}}}`, id))
+	}
+	w.applyInventory([]byte(`{"providers":{}}`), nil, core("first-runtime-id"), nil, "", now)
+	e.pollNetworkProfiles(context.Background(), w)
+	if len(w.view.Nodes) != 2 || w.view.Coverage.SourceStates["profile_membership"] != "available" {
+		t.Fatalf("active profile failed to merge after HTTP detail projection: %+v", w.view.Nodes)
+	}
+	for _, node := range w.view.Nodes {
+		if node.Loaded && (!networkNodeHasSubscription(node, "profile-a") || node.DelayMS == nil || *node.DelayMS != 17) {
+			t.Fatalf("active profile lost delay: %+v", node)
+		}
+	}
+	f.mu.Lock()
+	f.metas[0].Active = false
+	f.metas[1].Active = true
+	f.mu.Unlock()
+	now = now.Add(time.Minute)
+	w.applyInventory([]byte(`{"providers":{}}`), nil, core("second-runtime-id"), nil, "", now)
+	if len(w.view.Nodes) != 3 || w.view.Coverage.SourceStates["profile_membership"] != "unknown" {
+		t.Fatal("old membership survived a core reload before control revalidation")
+	}
+	e.pollNetworkProfiles(context.Background(), w)
+	if f.listReads != 2 || len(w.view.Nodes) != 2 {
+		t.Fatal("core reload did not promptly refresh current profile")
+	}
+	for _, node := range w.view.Nodes {
+		if node.Loaded && (!networkNodeHasSubscription(node, "profile-b") || networkNodeHasSubscription(node, "profile-a")) {
+			t.Fatalf("old profile membership survived reload: %+v", node)
+		}
+	}
+	f.mu.Lock()
+	f.status = http.StatusUnauthorized
+	f.mu.Unlock()
+	now = now.Add(5 * time.Minute)
+	e.pollNetworkProfiles(context.Background(), w)
+	if len(w.view.Nodes) != 3 || w.view.Coverage.SourceStates["profile_membership"] != "unknown" {
+		t.Fatal("failed control authentication kept an asserted core/profile association")
 	}
 }
 

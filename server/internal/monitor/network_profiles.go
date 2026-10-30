@@ -26,6 +26,7 @@ func (e *Engine) pollNetworkProfiles(ctx context.Context, w *networkWorker) {
 		w.mu.Lock()
 		w.view.Coverage.SourceStates["profiles"] = "not_configured"
 		w.view.Coverage.Notes = networkNote(w.view.Coverage.Notes, "配置文件订阅需要独立的MetaCubeXD控制API地址/CONTROL_TOKEN；核心secret不用于控制层。")
+		w.rebuildNetworkInventory(e.now())
 		w.mu.Unlock()
 		return
 	}
@@ -34,12 +35,13 @@ func (e *Engine) pollNetworkProfiles(ctx context.Context, w *networkWorker) {
 		w.mu.Lock()
 		w.view.Coverage.SourceStates["profiles"] = "credential_invalid"
 		w.profileCollectionNote("配置文件订阅采集：", "控制服务地址或已保存的凭据无法读取；请核对地址并重新保存独立的控制令牌。")
+		w.rebuildNetworkInventory(e.now())
 		w.mu.Unlock()
 		return
 	}
 	defer closeClient()
 	w.mu.RLock()
-	refresh := w.profilesFetched.IsZero() || e.now().Sub(w.profilesFetched) >= 5*time.Minute
+	refresh := w.profilesFetched.IsZero() || e.now().Sub(w.profilesFetched) >= 5*time.Minute || w.coreCatalogStamp != w.profilesCoreStamp
 	w.mu.RUnlock()
 	if refresh {
 		timeout, cancel := context.WithTimeout(ctx, 8*time.Second)
@@ -50,7 +52,7 @@ func (e *Engine) pollNetworkProfiles(ctx context.Context, w *networkWorker) {
 			w.mu.Lock()
 			state, note := networkProfileFailure(err, token)
 			w.view.Coverage.SourceStates["profiles"] = state
-			w.view.Coverage.Notes = networkNote(w.view.Coverage.Notes, "配置文件目录与核心节点缺少可验证身份映射，分别展示；未将同名节点健康借给订阅。")
+			w.view.Coverage.Notes = networkNote(w.view.Coverage.Notes, "当前激活配置通过完整节点目录核对后关联核心检测；未激活或归属待确认的目录不继承检测记录。")
 			w.rebuildNetworkInventory(e.now())
 			w.profileCollectionNote("配置文件订阅采集：", note)
 			w.mu.Unlock()
@@ -140,6 +142,7 @@ func (e *Engine) pollNetworkProfiles(ctx context.Context, w *networkWorker) {
 		w.profileQueue = queue
 		w.profileCursor = 0
 		w.profilesFetched = e.now()
+		w.profilesCoreStamp = w.coreCatalogStamp
 		w.view.Coverage.SourceStates["profiles"] = "available"
 		w.profileCollectionNote("配置文件订阅采集：", "")
 		w.view.Coverage.SourceStates["profile_nodes"] = "collecting"
@@ -151,7 +154,7 @@ func (e *Engine) pollNetworkProfiles(ctx context.Context, w *networkWorker) {
 			w.view.Coverage.Truncated = true
 			w.view.Coverage.Notes = networkNote(w.view.Coverage.Notes, "配置文件清单超过100项，本轮未完整覆盖。")
 		}
-		w.view.Coverage.Notes = networkNote(w.view.Coverage.Notes, "配置文件目录与核心节点缺少可验证身份映射，分别展示；未将同名节点健康借给订阅。")
+		w.view.Coverage.Notes = networkNote(w.view.Coverage.Notes, "当前激活配置通过完整节点目录核对后关联核心检测；未激活或归属待确认的目录不继承检测记录。")
 		w.rebuildNetworkInventory(e.now())
 		w.mu.Unlock()
 	}
@@ -184,7 +187,7 @@ func (e *Engine) pollNetworkProfiles(ctx context.Context, w *networkWorker) {
 					Meta    networkProfileMeta `json:"meta"`
 					Content string             `json:"content"`
 				}
-				if json.Unmarshal(body, &detail) != nil || detail.Meta.ID != rawID {
+				if json.Unmarshal(body, &detail) != nil || detail.Meta.ID != rawID || sub.UpdatedAt != nil && !sub.UpdatedAt.Equal(time.UnixMilli(detail.Meta.UpdatedAt)) {
 					err = ErrValidation
 				} else {
 					nodes, err = parseNetworkProfileNodes(detail.Content, sub.ID, token)
@@ -212,6 +215,9 @@ func (e *Engine) pollNetworkProfiles(ctx context.Context, w *networkWorker) {
 			w.profileSubs[subIndex].NodeCount = len(nodes)
 			w.profileSubs[subIndex].NodeCountKnown = complete
 		} else {
+			// Retain safe last-known directory rows, but never use an unreadable
+			// or changed detail to establish current core membership.
+			w.profileSubs[subIndex].NodeCountKnown = false
 			state, note := networkProfileFailure(err, token)
 			if state != "unauthorized" {
 				state = "partial"
@@ -223,7 +229,7 @@ func (e *Engine) pollNetworkProfiles(ctx context.Context, w *networkWorker) {
 		if w.profileCursor == len(w.profileQueue) && w.view.Coverage.SourceStates["profile_nodes"] == "collecting" {
 			w.view.Coverage.SourceStates["profile_nodes"] = "available"
 		}
-		w.view.Coverage.Notes = networkNote(w.view.Coverage.Notes, "配置文件目录与核心节点缺少可验证身份映射，分别展示；未将同名节点健康借给订阅。")
+		w.view.Coverage.Notes = networkNote(w.view.Coverage.Notes, "当前激活配置通过完整节点目录核对后关联核心检测；未激活或归属待确认的目录不继承检测记录。")
 		w.rebuildNetworkInventory(e.now())
 		w.mu.Unlock()
 	}
