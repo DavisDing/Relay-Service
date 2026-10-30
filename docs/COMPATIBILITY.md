@@ -88,6 +88,8 @@ LiteLLM可分别启用 `collect_models`、`collect_logs`；wb2api仅允许 `coll
 
 核心GET固定使用/version、/traffic、/memory、/connections、/proxies、/providers/proxies、/logs；memory忽略每连接首个占位帧，NDJSON持续读取而非ReadAll。MetaCubeXD控制层另配origin及CONTROL_TOKEN，只读/api/control/profiles及固定ID详情。provider为空不代表没有配置订阅；独立控制层未配置/无权限时显示覆盖缺口。控制令牌不从核心secret复用，禁止重定向，沿用私网授权/DNS-IP校验；不读取浏览器秘密、Docker或其他容器文件。
 
+配置清单约每5分钟重新读取，独立于每分钟最多4项的节点详情队列；按稳定ID发现后续新增、改名、更新和删除，最多100项。重排清单不会重置未完成详情的读取顺序。控制接口401/403明确显示认证受限，提示配置独立CONTROL_TOKEN或核对已保存凭据/反代认证；原面板的浏览器登录状态不传给Relay后端。暂时失败保留已有目录，由采集覆盖状态说明当前读取失败。
+
 配置详情含完整YAML，后端只内存提取顶层proxies名称和协议，拒绝过深/超量/alias/merge形态；provider引用不会下载，完整目录未知需标partial，不能假报0节点。同名同协议不能证明控制层与核心同一安装/配置，配置目录不继承核心健康；只有核心provider归属可直接用于该provider的节点证据。要使所有未激活订阅持续有新延迟需另行授权加载provider或隔离检测，本轮没有执行。
 
 原Web用量为浏览器IndexedDB、概览/日志为内存缓冲，Relay自行积累历史。原始日志正文不保存/回传，仅提供级别、接收时间和分类摘要；连接为当前采样，管理员用量分组为连续快照差分，均不是完整访问账本。节点24小时生命条按实际源检测时间落位，采集中断/缺失保留未知。新代码仅静态核对并格式化；按用户要求测试、构建及真实NAS联调交Hermes，均未执行。
