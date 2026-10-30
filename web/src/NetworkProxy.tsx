@@ -187,13 +187,13 @@ function DelayChart({ samples }: { samples: NetworkNodeSample[] }) {
   </svg><p className="sub">有效源检测延迟 · 最大 {max} ms。每点只代表对应检测目标和时刻。</p></div>;
 }
 
-function SubscriptionCard({ item, onNodes }: { item: NetworkSubscription; onNodes: () => void }) {
+export function SubscriptionCard({ item, onNodes }: { item: NetworkSubscription; onNodes: () => void }) {
   const percentage = item.total_bytes && item.used_bytes !== undefined ? Math.min(100, Math.max(0, item.used_bytes / item.total_bytes * 100)) : undefined;
   return <article className="workspace-panel network-subscription">
     <div className="network-row-head"><div><h3>{item.name}</h3><p className="sub">{item.source === 'provider' ? '内核代理提供者' : item.source === 'control' ? '配置管理服务' : '导入的订阅元数据'} · {item.source === 'control' ? item.active ? '管理层当前激活' : '管理层未激活' : item.active ? '源标记激活' : '源未标记激活'}</p></div><span className={`workspace-state ${['expired', 'exhausted'].includes(item.usage_state) ? 'unhealthy' : 'unknown'}`}>{label(item.usage_state)}</span></div>
     <strong className="network-quota">{bytes(item.used_bytes)} <small>/ {bytes(item.total_bytes)}</small></strong>
     {percentage !== undefined ? <progress max={100} value={percentage} aria-label={`${item.name}额度使用${percentage.toFixed(1)}%`} /> : <p className="sub">额度字段不完整，暂不计算使用率。</p>}
-    <dl className="workspace-facts network-mini-grid"><div><dt>剩余</dt><dd>{bytes(item.remaining_bytes)}</dd></div><div><dt>到期</dt><dd>{item.expire_seconds && item.expire_seconds > 0 ? time(new Date(item.expire_seconds * 1000).toISOString()) : '未提供'}</dd></div><div><dt>节点</dt><dd>{item.node_count_known ? `${item.node_count} 项` : '目录待采集'}</dd></div><div><dt>更新时间</dt><dd>{time(item.updated_at)}</dd></div></dl>
+    <dl className="workspace-facts network-mini-grid"><div><dt>剩余</dt><dd>{bytes(item.remaining_bytes)}</dd></div><div><dt>到期</dt><dd>{item.expire_seconds === 0 ? '不限时' : item.expire_seconds && item.expire_seconds > 0 ? time(new Date(item.expire_seconds * 1000).toISOString()) : '到期信息未知'}</dd></div><div><dt>节点</dt><dd>{item.node_count_known ? `${item.node_count} 项` : '目录待采集'}</dd></div><div><dt>更新时间</dt><dd>{time(item.updated_at)}</dd></div></dl>
     <Button type="button" className="text" onClick={onNodes}>查看所属节点<Icon name="next" /></Button>
   </article>;
 }
