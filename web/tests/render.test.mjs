@@ -28,6 +28,14 @@ const { Icon, ThemeControl, Toast, Button } = load('ui.tsx');
 const { AlertsPanel } = load('AlertsPanel.tsx');
 const { RetentionPanel } = load('RetentionPanel.tsx');
 const { Navigation } = load('Navigation.tsx');
+const { modelPages, networkPages, workspaceDestination, modelPage, networkPage } = load('NavigationRoutes.tsx');
+const { ModelsWorkspace } = load('ModelsWorkspace.tsx');
+const { NetworkProxy } = load('NetworkProxy.tsx');
+const { HomeCockpitView } = load('HomeCockpit.tsx');
+const { LogsWorkspace, LogsOverviewView } = load('LogsWorkspace.tsx');
+const { filterServiceLogs, ServiceLogTable } = load('ServiceLogs.tsx');
+const { readCockpit, networkIsCurrent } = load('CockpitData.tsx');
+const { APIError: CockpitAPIError } = load('api.ts');
 // Inspect styles in the same directory as the components scanned below. A
 // workspace can own a stylesheet without adding it to this test's file list.
 const css = readdirSync(new URL('../src/', import.meta.url)).filter(file => file.endsWith('.css')).sort()
@@ -177,6 +185,35 @@ test('navigation motion is bounded, respects preferences and mobile reuses the m
   assert.match(main, /key=\{tab\} className="workspace-content"/);
 });
 
+test('all workspace sections share top-menu destinations and mark their current secondary page', () => {
+  assert.equal(modelPages.length, 6);
+  assert.equal(networkPages.length, 6);
+  for (const [workspace, pages, lookup] of [['models', modelPages, modelPage], ['network', networkPages, networkPage]]) {
+    for (const page of pages) {
+      assert.deepEqual(workspaceDestination(page.key), { workspace, section: page.section });
+      assert.equal(lookup(page.section).key, page.key);
+      const html = renderToStaticMarkup(React.createElement(Navigation, { active: page.key, admin: true, busy: false, incidentCount: 0, onNavigate: noop, onLogout: noop }));
+      assert.match(html, new RegExp(`aria-controls="nav-${workspace}"`));
+      assert.ok(html.includes(`aria-current="page"><span>${page.label}</span>`));
+    }
+  }
+  assert.equal(workspaceDestination('logs-models'), undefined);
+  assert.equal(workspaceDestination('network-unknown'), undefined);
+});
+
+test('workspace bodies omit secondary navigation while retaining source filters and restricted states', () => {
+  const model = renderToStaticMarkup(React.createElement(ModelsWorkspace, { services: [], admin: false, section: 'channels' }));
+  assert.match(model, /模型 \/ 公开状态来源/);
+  assert.match(model, /核对模型部署、上游提供方与渠道证据/);
+  const network = renderToStaticMarkup(React.createElement(NetworkProxy, { services: [{ ...base, kind: 'mihomo' }], admin: false, section: 'connections' }));
+  assert.match(network, /仅管理员可查看/);
+  const logs = renderToStaticMarkup(React.createElement(LogsWorkspace, { page: 'logs-services', services: [], servicesSynced: '', admin: false, refreshKey: 0, onNavigate: noop }));
+  for (const html of [model, network, logs]) {
+    assert.doesNotMatch(html, /workspace-tabs/);
+    assert.doesNotMatch(html, /aria-label="(?:大模型视图|网络代理视图|日志视图)"/);
+  }
+});
+
 test('alert panel preserves evidence, device read access and sequential ack guards', () => {
   const html = renderToStaticMarkup(React.createElement(AlertsPanel, {
     services: [base], alerts: [{ id: 'alert', cursor: 2, service_id: 'a', kind: 'failure',
@@ -240,7 +277,24 @@ test('mihomo quota and existing node history preserve stale evidence labels', ()
 });
 
 const { WorkspacePagination } = load('Workspace.tsx');
-const { NodeAvailability } = load('NetworkProxy.tsx');
+const { NodeAvailability, SubscriptionCard, NodeSubscription } = load('NetworkProxy.tsx');
+test('node membership shows merged profile names and labels unmatched core evidence explicitly', () => {
+  const membership = (node, subscriptions = []) => renderToStaticMarkup(React.createElement(NodeSubscription, { node, subscriptions }));
+  assert.equal(membership({ subscriptions: [{ id: 'provider', name: 'provider' }, { id: 'profile', name: 'start' }] }), 'provider、start');
+  assert.equal(membership({ loaded: true }), '核心节点 · 归属待确认');
+  assert.equal(membership({ subscription_id: 'profile' }, [{ id: 'profile', name: '1' }]), '1');
+});
+test('subscription expiry distinguishes unlimited duration from missing data and dated plans', () => {
+  const card = expire => renderToStaticMarkup(React.createElement(SubscriptionCard, {
+    item: { id: 'profile', name: 'plan', source: 'control', usage_state: 'available', expire_seconds: expire }, onNodes: noop,
+  }));
+  assert.match(card(0), /<dt>到期<\/dt><dd>不限时<\/dd>/);
+  assert.match(card(undefined), /到期信息未知/);
+  assert.doesNotMatch(card(undefined), /不限时/);
+  const dated = card(Date.parse('2031-12-04T00:00:00Z') / 1000);
+  assert.match(dated, /2031/);
+  assert.doesNotMatch(dated, /不限时|到期信息未知|未提供/);
+});
 test('workspace pagination shares secondary controls and explicit disabled boundaries', () => {
   const html = renderToStaticMarkup(React.createElement(WorkspacePagination, {
     total: 25, page: 1, hasPrevious: false, hasNext: false, onPrevious: noop, onNext: noop,
@@ -260,4 +314,84 @@ test('node availability presents distinct sample ratio and leaves missing histor
   } } }));
   assert.match(html, /75.0%/); assert.match(html, /4 次检测/); assert.match(html, /2\/96 时段有样本/);
   assert.match(html, /3 次成功，1 次失败/);
+});
+
+test('home cockpit links all three domains and keeps missing or stale evidence out of live totals', () => {
+  const now = Date.parse('2026-10-30T08:00:00Z');
+  const props = { services: [{ ...base, kind: 'mihomo' }], servicesSynced: new Date(now).toISOString(), admin: true, refreshKey: 0, onNavigate: noop, now };
+  const empty = renderToStaticMarkup(React.createElement(HomeCockpitView, { ...props, snapshot: { models: {}, networks: {} } }));
+  for (const label of ['服务监控', '大模型', '网络代理', '需要关注', '最近服务观测', '服务日志', '大模型日志', '网络代理日志']) assert.ok(empty.includes(label));
+  assert.match(empty, /等待数据/);
+  assert.match(empty, /0 \/ 1 个实例有效/);
+  const stale = renderToStaticMarkup(React.createElement(HomeCockpitView, { ...props, servicesError: 'offline', snapshot: { models: {}, networks: { a: { data: { state: 'available', generation: 1, collected_at: new Date(now).toISOString(), overview: { subscription_count: 999, node_count: 999 }, coverage: { source_states: {} } }, receivedAt: now, error: 'offline' } } } }));
+  assert.doesNotMatch(stale, /999/);
+  assert.match(stale, /同步待确认/);
+  assert.doesNotMatch(stale, /class="signal-healthy"/);
+});
+
+test('log cockpit exposes source windows, preserves network privilege and describes model aggregates', () => {
+  const props = { page: 'logs', services: [], servicesSynced: '', admin: false, refreshKey: 0, onNavigate: noop, snapshot: { models: {}, networks: {} } };
+  const html = renderToStaticMarkup(React.createElement(LogsOverviewView, props));
+  assert.match(html, /不是逐请求明细或完整 24 小时统计/);
+  assert.match(html, /代理日志采集状态和保存配置仅管理员可查看/);
+  const restricted = renderToStaticMarkup(React.createElement(LogsWorkspace, { ...props, page: 'logs-network' }));
+  assert.match(restricted, /仅管理员可查看/);
+  assert.doesNotMatch(restricted, /原控制台|日志等级/);
+  const nav = renderToStaticMarkup(React.createElement(Navigation, { active: 'logs-models', admin: true, busy: false, incidentCount: 0, onNavigate: noop, onLogout: noop }));
+  assert.match(nav, /aria-controls="nav-logs"/);
+  assert.match(nav, /id="nav-logs"[^>]*inert=""/);
+  assert.match(nav, /aria-current="page"[^>]*><span>大模型日志/);
+  assert.match(nav, />首页<\/button>/);
+  const now = Date.parse('2026-10-30T08:00:00Z');
+  const partial = renderToStaticMarkup(React.createElement(LogsOverviewView, { ...props, admin: true, now,
+    services: [{ ...base, id: 'ok', kind: 'mihomo' }, { ...base, id: 'failed', kind: 'mihomo' }],
+    snapshot: { models: {}, networks: {
+      ok: { receivedAt: now, data: { settings: { persist_logs: true, log_retention_hours: 24, log_limit_mib: 20 }, coverage: { source_states: {} } } },
+      failed: { error: 'offline' },
+    } },
+  }));
+  assert.match(partial, /已确认 1 \/ 2 个实例的保存配置/);
+  assert.match(partial, /读取失败/);
+});
+
+test('service logs filter projected messages and render literal error text with historical version', () => {
+  const items = [{ id: 'one', status: 'healthy', class: 'process', message: 'ok', generation: 2 }, { id: 'two', status: 'unhealthy', class: 'timeout', message: '<script>literal</script>', generation: 1 }];
+  assert.deepEqual(filterServiceLogs(items, '检查超时', 'unhealthy').map(item => item.id), ['two']);
+  assert.equal(filterServiceLogs(items, 'ok', 'unhealthy').length, 0);
+  const html = renderToStaticMarkup(React.createElement(ServiceLogTable, { items }));
+  assert.match(html, /&lt;script&gt;literal/);
+  assert.doesNotMatch(html, /<script>/);
+  assert.match(html, /配置版本/);
+});
+
+test('cockpit reads use bounded cache GETs and never request network logs for the home summary', async () => {
+  const services = Array.from({ length: 11 }, (_, i) => ({ ...base, id: String(i), kind: 'mihomo' }));
+  let running = 0; let max = 0; const paths = [];
+  const read = async path => {
+    paths.push(path);
+    if (path.startsWith('/models')) return { data: { sources: [] } };
+    running++; max = Math.max(max, running);
+    await new Promise(resolve => setTimeout(resolve, 1)); running--;
+    return { data: { generation: 1 } };
+  };
+  const result = await readCockpit(services, false, read);
+  assert.equal(Object.keys(result.networks).length, 11);
+  assert.equal(max, 4);
+  assert.ok(paths.every(path => path.startsWith('/models?section=overview') || path.includes('section=overview')));
+  assert.ok(paths.every(path => !path.includes('checks') && !path.includes('section=logs')));
+});
+
+test('cockpit partial failures retain only their own cache and reject old configuration generations', async () => {
+  const services = [{ ...base, kind: 'mihomo' }];
+  const prior = { models: { data: { sources: [] }, receivedAt: 10 }, networks: { a: { data: { generation: 1, state: 'available' }, receivedAt: 10 } } };
+  const read = async path => { if (path.startsWith('/models')) return { data: { sources: [] } }; throw new Error('fixture offline'); };
+  const value = await readCockpit(services, false, read, prior);
+  assert.equal(value.networks.a.receivedAt, 10);
+  assert.match(value.networks.a.error, /offline/);
+  assert.equal(value.models.error, undefined);
+  assert.equal(networkIsCurrent(value.networks.a), false);
+  const changed = await readCockpit(services, false, async path => ({ data: path.startsWith('/models') ? { sources: [{ id: 'a', generation: 9 }] } : { generation: 9 } }));
+  assert.equal(changed.models.data, undefined);
+  assert.equal(changed.networks.a.data, undefined);
+  await assert.rejects(readCockpit(services, true, async () => { throw new CockpitAPIError('expired', 401); }), reason => reason.status === 401);
 });

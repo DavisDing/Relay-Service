@@ -45,6 +45,23 @@ func TestBrowserFixture(t *testing.T) {
 			if err := tx.Put("monitor.check_index", s.ID+"/"+c.ID, c.Cursor); err != nil {
 				return err
 			}
+			// Multiple pages let browser checks verify the service log cursor and
+			// current-page filters without touching a real monitored service.
+			if i == 0 {
+				for record := 0; record < 55; record++ {
+					history := c
+					history.ID = fmt.Sprintf("history-%d", record)
+					history.Cursor = fmt.Sprintf("%020d", 1000+record)
+					history.CompletedAt = now.Add(-time.Duration(55-record) * time.Minute)
+					history.StartedAt = history.CompletedAt.Add(-80 * time.Millisecond)
+					if err := tx.Put("monitor.history", s.ID+"/"+history.Cursor, history); err != nil {
+						return err
+					}
+					if err := tx.Put("monitor.check_index", s.ID+"/"+history.ID, history.Cursor); err != nil {
+						return err
+					}
+				}
+			}
 			return tx.Put("monitor.alerts", fmt.Sprintf("%020d", i+1), monitor.Alert{ID: fmt.Sprint(i + 1), Cursor: uint64(i + 1), ServiceID: s.ID, CheckID: c.ID, Kind: "failure", Message: "审计事件摘要", StartedAt: now})
 		}); err != nil {
 			t.Fatal(err)

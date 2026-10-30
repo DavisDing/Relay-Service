@@ -5,6 +5,7 @@
 .network-inventory-counts { grid-template-columns: repeat(5,minmax(0,1fr)); }
 .network-subscriptions { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 1rem; }
 .network-subscription { background: var(--surface-solid); box-shadow: none; }
+.network-availability-heading { min-width: 11rem; }
 .network-availability { min-width: 11rem; max-width: 17rem; }
 .network-availability strong { font-variant-numeric: tabular-nums; }
 .workspace-table .network-availability small { margin-top: .25rem; }

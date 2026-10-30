@@ -14,6 +14,7 @@ export type PublicStatusConfig = {
 };
 export type Principal = { id: string; role: string; must_change_password?: boolean };
 export type Check = {
+  generation?: number;
   details?: {
     source: string; count: number; truncated: boolean;
     public_status?: { source: string; count: number; truncated: boolean; observed_at: string; updated_at?: string; unknown: boolean; unhealthy: boolean; components: {name: string;status: string;source_status?:string;category?:string;group?:string;uptime?:number;heartbeats?:string[];updated_at?:string}[] };

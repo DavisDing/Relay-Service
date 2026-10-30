@@ -19,7 +19,7 @@
 
 | 服务 / kind | 固定 GET 路径 | 当前响应判定与层级 | 实际安装验收 |
 |---|---|---|---|
-| mihomo 订阅 / `mihomo` | `/providers/proxies` | 读取 provider 的 `subscriptionInfo.Upload/Download/Total/Expire`；字段缺失显示未知，Total/Expire 为0显示未提供。到期或已知配额耗尽计入现有故障阈值；补读 `/proxies` 中已有节点延迟/在线记录，超过15分钟或缺失显示未知；不刷新订阅、不主动测速 | 合成响应通过；真实 mihomo 版本/权限/订阅头信息未验收 |
+| mihomo 订阅 / `mihomo` | `/providers/proxies` | 读取 provider 的 `subscriptionInfo.Upload/Download/Total/Expire`；字段缺失显示未知，Total/Expire 为0在基础检查详情中显示未提供；网络代理工作区中Expire为0显示“不限时”、缺失显示“到期信息未知”。到期或已知配额耗尽计入现有故障阈值；补读 `/proxies` 中已有节点延迟/在线记录，超过15分钟或缺失显示未知；不刷新订阅、不主动测速 | 合成响应通过；真实 mihomo 版本/权限/订阅头信息未验收 |
 | 中转站 / OpenAI 模型目录 / `openai` | `/v1/models` | 读取 `data[].id`；证据为模型目录可读，每个模型推理状态 `not_tested`。空目录明确显示，不推断模型可用、配额或失败率 | 提供兼容接口的服务可接入；真实中转站尚未指定，未验收 |
 | 公开状态页 / `statuspage` | `/api/v2/summary.json` | 读取非分组组件名称及 `operational/degraded_performance/partial_outage/major_outage/under_maintenance`；非正常状态进入故障阈值，未知状态或无组件显示不支持。是服务商报告，不能替代账号下实际推理证据 | 已核对公开 Statuspage JSON 样例；补充 Pipio `/api/uptime/status`、自定义JSON字段和显式HTML规则；动态JS空壳/歧义结构不自动判断 |
 
@@ -88,7 +88,9 @@ LiteLLM可分别启用 `collect_models`、`collect_logs`；wb2api仅允许 `coll
 
 核心GET固定使用/version、/traffic、/memory、/connections、/proxies、/providers/proxies、/logs；memory忽略每连接首个占位帧，NDJSON持续读取而非ReadAll。MetaCubeXD控制层另配origin及CONTROL_TOKEN，只读/api/control/profiles及固定ID详情。provider为空不代表没有配置订阅；独立控制层未配置/无权限时显示覆盖缺口。控制令牌不从核心secret复用，禁止重定向，沿用私网授权/DNS-IP校验；不读取浏览器秘密、Docker或其他容器文件。
 
-配置详情含完整YAML，后端只内存提取顶层proxies名称和协议，拒绝过深/超量/alias/merge形态；provider引用不会下载，完整目录未知需标partial，不能假报0节点。同名同协议不能证明控制层与核心同一安装/配置，配置目录不继承核心健康；只有核心provider归属可直接用于该provider的节点证据。要使所有未激活订阅持续有新延迟需另行授权加载provider或隔离检测，本轮没有执行。
+配置清单约每5分钟重新读取，独立于每分钟最多4项的节点详情队列；按稳定ID发现后续新增、改名、更新和删除，最多100项。重排清单不会重置未完成详情的读取顺序。控制接口401/403明确显示认证受限，提示配置独立CONTROL_TOKEN或核对已保存凭据/反代认证；原面板的浏览器登录状态不传给Relay后端。暂时失败保留已有目录，由采集覆盖状态说明当前读取失败。
+
+配置详情含完整YAML，后端只内存提取顶层proxies名称和协议，拒绝过深/超量/alias/merge形态；provider引用不会下载，完整目录未知需标partial，不能假报0节点。同名同协议本身不能证明控制层与核心同一安装/配置。2026-10-30按用户配置的同实例配对补充受限关联：仅唯一激活配置可参与，清单在5分钟内且可读、详情与清单updatedAt一致且节点目录完整，所有节点名（区分大小写）和归一化协议均须在当前核心中对应。成功后将配置归属追加到核心行，省略对应目录行，核心ID、延迟、源检测时间和历史保持原样，provider归属仍保留；未激活、导入或核对不足的目录不借用检测。核心目录名称/协议/运行时ID摘要变化时立即撤销旧关联并提前重读配置清单，控制读取失败亦撤销。该规则依赖正确的实例配对，不是独立身份认证；不提供运行时ID的核心版本无法据此发现同名同协议重载，外部切换也受轮询间隔限制。运行时ID合同参照上述固定mihomo提交的adapter/outbound/base.go（新适配器UUID、JSON中的id），只在内存计算目录摘要，不作为历史身份或公开字段。要使所有未激活订阅持续有新延迟需另行授权加载provider或隔离检测，本轮没有执行。
 
 原Web用量为浏览器IndexedDB、概览/日志为内存缓冲，Relay自行积累历史。原始日志正文不保存/回传，仅提供级别、接收时间和分类摘要；连接为当前采样，管理员用量分组为连续快照差分，均不是完整访问账本。节点24小时生命条按实际源检测时间落位，采集中断/缺失保留未知。新代码仅静态核对并格式化；按用户要求测试、构建及真实NAS联调交Hermes，均未执行。
 

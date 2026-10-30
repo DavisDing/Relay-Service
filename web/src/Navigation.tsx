@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent, MouseEvent, PointerEvent } from 'react';
 import { Button, Icon, Modal, ThemeControl } from './ui';
-import type { IconName } from './ui';
+import { modelPages, networkPages } from './NavigationRoutes';
+import type { NavigationPage } from './NavigationRoutes';
 
-type Page = { key: string; label: string; description: string; icon: IconName };
+type Page = NavigationPage;
 const monitoring: Page[] = [
   { key: 'services', label: '服务监控', description: '服务运行态势、分组与检查明细', icon: 'grid' },
   { key: 'alerts', label: '故障与告警', description: '故障、恢复与访问受限事件', icon: 'bell' },
@@ -13,10 +14,15 @@ const management: Page[] = [
   { key: 'settings', label: '系统设置', description: '数据保留与清理策略', icon: 'system' },
 ];
 const diagnostic: Page = { key: 'diagnostic', label: '诊断摘要', description: '生成与导出脱敏诊断', icon: 'pulse' };
-const network: Page = { key: 'network', label: '网络代理', description: '流量、订阅、节点、连接与日志', icon: 'server' };
-const models: Page = { key: 'models', label: '大模型', description: '模型、渠道、调用证据与公开状态', icon: 'grid' };
+const home: Page = { key: 'home', label: '首页', description: '服务、模型与网络代理的全局概览', icon: 'pulse' };
+const logs: Page[] = [
+  { key: 'logs', label: '日志总览', description: '按来源查看记录与采集覆盖', icon: 'history' },
+  { key: 'logs-services', label: '服务日志', description: '已保存的服务检查与错误记录', icon: 'server' },
+  { key: 'logs-models', label: '大模型日志', description: '模型调用聚合与样本时间窗', icon: 'grid' },
+  { key: 'logs-network', label: '网络代理日志', description: '核心日志与采集事件 · 管理员', icon: 'pulse' },
+];
 
-type Menu = 'monitoring' | 'management' | 'account';
+type Menu = 'monitoring' | 'models' | 'network' | 'management' | 'logs' | 'account';
 type Props = {
   active: string;
   admin: boolean;
@@ -105,9 +111,9 @@ export function Navigation({ active, admin, busy, incidentCount, onNavigate, onL
       aria-label={title} aria-hidden={menu !== value} inert={menu !== value}>
       <div className="flyout-clip"><div className="flyout-inner">
         <div className="flyout-primary"><p className="nav-caption">{title}</p>{pages.map(page => pageButton(page))}</div>
-        <div className="flyout-context"><p className="nav-caption">{value === 'monitoring' ? '监控范围' : '管理范围'}</p>
-          <h2>{value === 'monitoring' ? '每一次观测，都有依据。' : '连接、授权与数据策略。'}</h2>
-          <p>{value === 'monitoring' ? '集中查看服务的基础检查、数据新鲜度与未恢复事件。' : '管理 Relay 的设备访问与保留策略，检查凭据保留在服务端。'}</p>
+        <div className="flyout-context"><p className="nav-caption">{value === 'logs' ? '记录与来源' : value === 'models' ? '模型证据' : value === 'network' ? '代理观测' : value === 'monitoring' ? '监控范围' : '管理范围'}</p>
+          <h2>{value === 'logs' ? '每一条记录，都有出处。' : value === 'models' ? '目录、调用与状态，分别核对。' : value === 'network' ? '流量、订阅与节点，一处查看。' : value === 'monitoring' ? '每一次观测，都有依据。' : '连接、授权与数据策略。'}</h2>
+          <p>{value === 'logs' ? '查看服务检查、模型调用证据与代理日志，保留各自的来源、权限和时间范围。' : value === 'models' ? '按实例查看目录、渠道和已有调用证据；公开状态与主动探针保持独立。' : value === 'network' ? '查看采集到的流量、订阅、节点与连接；未知和检测缺口分别呈现。' : value === 'monitoring' ? '集中查看服务的基础检查、数据新鲜度与未恢复事件。' : '管理 Relay 的设备访问与保留策略，检查凭据保留在服务端。'}</p>
           {value === 'monitoring' && <span className="nav-context-note">无推理基础检查 · 独立证据层级</span>}
         </div>
       </div></div>
@@ -128,13 +134,14 @@ export function Navigation({ active, admin, busy, incidentCount, onNavigate, onL
       }}
       onKeyDown={event => { if (event.key === 'Escape' && menu) { event.preventDefault(); event.stopPropagation(); close(true); } }}>
       <div className="global-nav-bar">
-        <Button className="nav-brand" aria-label="Relay 服务监控" disabled={busy} onClick={() => navigate('services')}><Icon name="pulse" /><span>Relay</span></Button>
+        <Button className="nav-brand" aria-label="Relay 首页" disabled={busy} onClick={() => navigate('home')}><Icon name="pulse" /><span>Relay</span></Button>
         <nav className="global-nav-links" aria-label="主要导航">
+          <Button className="nav-trigger" data-active={active === 'home'} aria-current={active === 'home' ? 'page' : undefined} disabled={busy}
+            onPointerEnter={() => close()} onClick={() => navigate('home')}>首页</Button>
           <Button className="nav-trigger" data-active={active === 'services' || active === 'alerts'} disabled={busy} {...triggerProps('monitoring')}>服务监控{incidentCount > 0 && <i className="nav-alert-dot" aria-label={`${incidentCount} 个服务有未恢复事件`} />}</Button>
-          <Button className="nav-trigger" data-active={active === 'models'} aria-current={active === 'models' ? 'page' : undefined} disabled={busy}
-            onPointerEnter={() => close()} onClick={() => navigate('models')}>大模型</Button>
-          <Button className="nav-trigger" data-active={active === 'network'} aria-current={active === 'network' ? 'page' : undefined} disabled={busy}
-            onPointerEnter={() => close()} onClick={() => navigate('network')}>网络代理</Button>
+          <Button className="nav-trigger" data-active={modelPages.some(page => page.key === active)} disabled={busy} {...triggerProps('models')}>大模型</Button>
+          <Button className="nav-trigger" data-active={networkPages.some(page => page.key === active)} disabled={busy} {...triggerProps('network')}>网络代理</Button>
+          <Button className="nav-trigger" data-active={active === 'logs' || active.startsWith('logs-')} disabled={busy} {...triggerProps('logs')}>日志</Button>
           {admin && <>
             <Button className="nav-trigger" data-active={active === 'devices' || active === 'settings'} disabled={busy} {...triggerProps('management')}>管理</Button>
             <Button className="nav-trigger" data-active={active === 'diagnostic'} aria-current={active === 'diagnostic' ? 'page' : undefined} disabled={busy}
@@ -149,6 +156,9 @@ export function Navigation({ active, admin, busy, incidentCount, onNavigate, onL
         </div>
       </div>
       {panel('monitoring', '浏览监控', monitoring)}
+      {panel('models', '浏览大模型', modelPages)}
+      {panel('network', '浏览网络代理', networkPages)}
+      {panel('logs', '浏览日志', logs)}
       {admin && panel('management', '管理 Relay', management)}
       <section id="nav-account" className="nav-flyout" data-open={menu === 'account'} aria-label="外观与账户" aria-hidden={menu !== 'account'} inert={menu !== 'account'}>
         <div className="flyout-clip"><div className="flyout-inner account-inner">
@@ -162,7 +172,7 @@ export function Navigation({ active, admin, busy, incidentCount, onNavigate, onL
       <div id="mobile-navigation" className="mobile-navigation">
         <div className="mobile-nav-head"><span>Relay</span><Button className="icon-button" aria-label="关闭导航菜单" autoFocus data-autofocus onClick={() => setMobileOpen(false)}><Icon name="close" /></Button></div>
         <h2 id="mobile-navigation-title" className="nav-caption">浏览控制台</h2>
-        <nav aria-label="移动端导航">{[...monitoring, models, network].map(page => pageButton(page, true))}{admin && [...management, diagnostic].map(page => pageButton(page, true))}</nav>
+        <nav aria-label="移动端导航">{pageButton(home, true)}<p className="mobile-nav-group">服务监控</p>{monitoring.map(page => pageButton(page, true))}<p className="mobile-nav-group">大模型</p>{modelPages.map(page => pageButton(page, true))}<p className="mobile-nav-group">网络代理</p>{networkPages.map(page => pageButton(page, true))}<p className="mobile-nav-group">日志</p>{logs.map(page => pageButton(page, true))}{admin && <><p className="mobile-nav-group">管理</p>{[...management, diagnostic].map(page => pageButton(page, true))}</>}</nav>
         <div className="mobile-nav-foot"><span>{admin ? '管理员' : '只读设备'}</span><Button className="text" onClick={() => {
           setMobileOpen(false);
           opening.current = 'press';

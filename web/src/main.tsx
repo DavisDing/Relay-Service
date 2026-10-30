@@ -3,6 +3,9 @@ import { createRoot } from 'react-dom/client';
 import './style.css';
 import './navigation.css';
 import { Navigation } from './Navigation';
+import { modelPage, networkPage, workspaceDestination } from './NavigationRoutes';
+import type { ModelsSection } from './models-types';
+import type { NetworkSection } from './network-types';
 import { Button, Icon, Modal, ThemeControl, Toast } from './ui';
 import { api, APIError, APIRequestSupersededError, invalidateAPIRequests } from './api';
 import { RetentionPanel } from './RetentionPanel';
@@ -14,6 +17,8 @@ import { ServicesOverview } from './ServicesOverview';
 import { ServiceEditor, HistoryDialog } from './ServiceDialogs';
 import { NetworkProxy } from './NetworkProxy';
 import { ModelsWorkspace } from './ModelsWorkspace';
+import { HomeCockpit } from './HomeCockpit';
+import { LogsWorkspace } from './LogsWorkspace';
 
 const defaults: Form = {
   id: '',
@@ -33,6 +38,7 @@ const defaults: Form = {
   clear_token: false,
 };
 const pageTitles: Record<string, string> = {
+  home: '首页', logs: '日志', 'logs-services': '服务日志', 'logs-models': '大模型日志', 'logs-network': '网络代理日志',
   services: '服务监控', alerts: '故障与告警', devices: '访问设备',
   diagnostic: '诊断摘要', settings: '系统设置', network: '网络代理', models: '大模型',
 };
@@ -78,10 +84,13 @@ function App() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState('services');
+  const [tab, setTab] = useState('home');
   const [networkRefresh, setNetworkRefresh] = useState(0);
   const [networkService, setNetworkService] = useState('');
   const [modelService, setModelService] = useState('');
+  const [modelSection, setModelSection] = useState<ModelsSection>('overview');
+  const [networkSection, setNetworkSection] = useState<NetworkSection>('overview');
+  const activePage = tab === 'models' ? modelPage(modelSection).key : tab === 'network' ? networkPage(networkSection).key : tab;
   const [alertPage, setAlertPage] = useState('');
   const [loadedAlertPage, setLoadedAlertPage] = useState('');
   const [alertPages, setAlertPages] = useState<string[]>([]);
@@ -132,9 +141,10 @@ function App() {
     setAlertNext('');
     setAlertsMore(false);
     setAckCursor(0);
-    setTab('services');
+    setTab('home');
     setNetworkService('');
     setModelService('');
+    setModelSection('overview'); setNetworkSection('overview');
   }, []);
 
   const refresh = useCallback(async () => {
@@ -321,6 +331,16 @@ function App() {
   const canAck = unreadCursors.length > 0 && !skippedUnreadPage && loadedAlertPage === alertPage;
   const incidentCount = services.filter(service => service.open_incident || service.open_restriction).length;
 
+  function navigate(page: string, serviceID?: string) {
+    const destination = workspaceDestination(page);
+    if (destination?.workspace === 'models') setModelSection(destination.section);
+    if (destination?.workspace === 'network') setNetworkSection(destination.section);
+    if (serviceID && destination?.workspace === 'network') setNetworkService(serviceID);
+    if (serviceID && destination?.workspace === 'models') setModelService(serviceID);
+    if (page === 'alerts') { setAlertPage(''); setAlertPages([]); }
+    setTab(destination?.workspace || page); setError(''); window.scrollTo(0, 0);
+    requestAnimationFrame(() => document.getElementById('workspace-title')?.focus({ preventScroll: true }));
+  }
 
   if (checking) return (
     <main className="login" aria-busy="true">
@@ -377,25 +397,20 @@ function App() {
 
   return (
     <div className="shell">
-      <Navigation active={tab} admin={me.role === 'admin'} busy={busy} incidentCount={incidentCount}
-        onNavigate={page => {
-          setTab(page);
-          setError('');
-          window.scrollTo(0, 0);
-          requestAnimationFrame(() => document.getElementById('workspace-title')?.focus({ preventScroll: true }));
-        }}
+      <Navigation active={activePage} admin={me.role === 'admin'} busy={busy} incidentCount={incidentCount}
+        onNavigate={navigate}
         onLogout={() => action(async ensureCurrent => {
           if (me.role === 'admin') await api('/auth/logout', 'POST', {});
           ensureCurrent();
           clearSession();
         }, false)} />
-      <main id="main-content" tabIndex={-1} className={tab === 'services' ? 'overview-page' : undefined}>
+      <main id="main-content" tabIndex={-1} className={['services', 'home', 'logs'].includes(tab) ? 'overview-page' : undefined}>
         <div key={tab} className="workspace-content">
         <header className="workspace-header">
           <div className="page-title">
             <span className="eyebrow">OPERATIONS</span>
-            <h1 id="workspace-title" tabIndex={-1}>{pageTitles[tab]}</h1>
-            <p className="sub">{tab === 'network' ? '代理流量、订阅与节点质量 · 自动更新' : tab === 'models' ? '模型目录、渠道与调用证据 · 自动更新' : <>最近同步 {time(tab === 'alerts' ? alertsSynced : servicesSynced)} · 每 60 秒刷新</>}</p>
+            <h1 id="workspace-title" tabIndex={-1}>{pageTitles[tab]}{tab === 'models' && ` · ${modelPage(modelSection).label}`}{tab === 'network' && ` · ${networkPage(networkSection).label}`}</h1>
+            <p className="sub">{tab === 'home' ? '服务、模型与网络代理 · 全局运行概览' : tab.startsWith('logs') ? '按来源追溯记录 · 保留采集覆盖与时间边界' : tab === 'network' ? '代理流量、订阅与节点质量 · 自动更新' : tab === 'models' ? '模型目录、渠道与调用证据 · 自动更新' : <>最近同步 {time(tab === 'alerts' ? alertsSynced : servicesSynced)} · 每 60 秒刷新</>}</p>
           </div>
           <Button className="secondary refresh-view" disabled={busy} onClick={() => { setNetworkRefresh(value => value + 1); return refresh(); }} aria-label="刷新视图">
             <Icon name="refresh" /><span>刷新视图</span>
@@ -408,12 +423,15 @@ function App() {
           </div>
         ))}
 
+        {tab === 'home' && <HomeCockpit services={services} servicesSynced={servicesSynced} servicesError={refreshErrors.services} admin={me.role === 'admin'} refreshKey={networkRefresh} onNavigate={navigate} onUnauthorized={clearSession} />}
+        {tab.startsWith('logs') && <LogsWorkspace page={tab} services={services} servicesSynced={servicesSynced} servicesError={refreshErrors.services} admin={me.role === 'admin'} refreshKey={networkRefresh} onNavigate={navigate} onUnauthorized={clearSession} />}
+
         {tab === 'services' && <ServicesOverview services={services} alerts={alerts}
           servicesSynced={servicesSynced} alertsSynced={alertsSynced}
           alertsCurrent={loadedAlertPage === '' && !refreshErrors.alerts} alertsComplete={!alertsMore}
           admin={me.role === 'admin'} busy={busy}
-          onNetwork={service => { setNetworkService(service.id); setTab('network'); window.scrollTo(0, 0); }}
-          onModels={service => { setModelService(service.id); setTab('models'); window.scrollTo(0, 0); }}
+          onNetwork={service => navigate('network', service.id)}
+          onModels={service => navigate('models', service.id)}
           onAdd={() => { setError(''); setForm({ ...defaults }); }}
           onAlerts={() => { setAlertPage(''); setAlertPages([]); setTab('alerts'); }}
           onHistory={showHistory} onEdit={service => { setError(''); setForm(toInput(service)); }}
@@ -425,10 +443,10 @@ function App() {
             setNotice('无推理检查已排队。');
           })} />}
 
-        {tab === 'network' && <NetworkProxy services={services} admin={me.role === 'admin'} refreshKey={networkRefresh} initialServiceID={networkService}
+        {tab === 'network' && <NetworkProxy services={services} admin={me.role === 'admin'} refreshKey={networkRefresh} initialServiceID={networkService} section={networkSection} onSectionChange={section => navigate(networkPage(section).key)}
           onUnauthorized={clearSession} onAdd={() => { setError(''); setForm({ ...defaults, kind: 'mihomo' }); }} />}
 
-        {tab === 'models' && <ModelsWorkspace services={services} admin={me.role === 'admin'} refreshKey={networkRefresh} initialServiceID={modelService}
+        {tab === 'models' && <ModelsWorkspace services={services} admin={me.role === 'admin'} refreshKey={networkRefresh} initialServiceID={modelService} section={modelSection} onSectionChange={section => navigate(modelPage(section).key)}
           onUnauthorized={clearSession} onEditService={service => { setError(''); setForm(toInput(service)); }} />}
 
         {tab === 'alerts' && <AlertsPanel alerts={alerts} services={services} ackCursor={ackCursor}

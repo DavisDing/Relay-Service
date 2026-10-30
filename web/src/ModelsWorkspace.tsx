@@ -3,15 +3,13 @@ import type { ReactNode } from 'react';
 import { api, APIError, APIRequestSupersededError } from './api';
 import { kindLabels, time } from './presentation';
 import { Button, Icon } from './ui';
-import { WorkspaceTabs, WorkspaceMetric as Metric, WorkspaceEmpty as Empty, WorkspaceSection, WorkspacePagination } from './Workspace';
+import { WorkspaceMetric as Metric, WorkspaceEmpty as Empty, WorkspaceSection, WorkspacePagination } from './Workspace';
 import type { Service } from './types';
 import type { ModelsChannel, ModelsModel, ModelsPublicStatus, ModelsSample, ModelsSection, ModelsSource, ModelsView } from './models-types';
+import { modelPages } from './NavigationRoutes';
 import './models.css';
 
-const sections: { key: ModelsSection; label: string }[] = [
-  { key: 'overview', label: '总览' }, { key: 'models', label: '模型' }, { key: 'channels', label: '渠道' },
-  { key: 'traffic', label: '调用证据' }, { key: 'status', label: '公开状态' }, { key: 'probes', label: '模型探针' },
-];
+const sections = modelPages.map(item => ({ key: item.section, label: item.label }));
 const sectionDescriptions: Record<ModelsSection, string> = {
   overview: '按模型整理目录、部署与调用证据，服务进程状态在服务监控查看。',
   models: '按实例检索模型，展开查看部署映射和调用样本。',
@@ -79,12 +77,13 @@ function PublicStatusEntry({ item }: { item: ModelsPublicStatus }) {
 
 type Props = {
   services: Service[]; admin: boolean; initialServiceID?: string; refreshKey?: number;
+  logsOnly?: boolean; section?: ModelsSection; onSectionChange?: (section: ModelsSection) => void;
   onUnauthorized?: () => void; onEditService?: (service: Service) => void;
 };
-export function ModelsWorkspace({ services, admin, initialServiceID = '', refreshKey = 0, onUnauthorized, onEditService }: Props) {
+export function ModelsWorkspace({ services, admin, initialServiceID = '', refreshKey = 0, logsOnly = false, section: requestedSection = 'overview', onSectionChange, onUnauthorized, onEditService }: Props) {
   const eligible = services.filter(service => ['litellm', 'workbuddy2api', 'openai', 'ollama', 'openwebui', 'statuspage'].includes(service.kind) || !!service.collect_models || !!service.collect_logs || !!service.current?.details?.gateway || !!service.current?.details?.public_status);
   const [serviceID, setServiceID] = useState(initialServiceID);
-  const [section, setSection] = useState<ModelsSection>('overview');
+  const section = logsOnly ? 'traffic' : requestedSection;
   const [query, setQuery] = useState(''); const [search, setSearch] = useState(''); const [state, setState] = useState('');
   const [cursor, setCursor] = useState(''); const [previous, setPrevious] = useState<string[]>([]);
   const [stored, setStored] = useState<{ scope: string; data: ModelsView; receivedAt: number } | null>(null);
@@ -144,14 +143,15 @@ export function ModelsWorkspace({ services, admin, initialServiceID = '', refres
     return () => { active = false; clearTimeout(timer); };
   }, [scope, refreshKey]);
   function resetPage() { setCursor(''); setPrevious([]); }
-  function chooseSection(next: ModelsSection) { setSection(next); setQuery(''); setSearch(''); setState(''); resetPage(); }
+  function chooseSection(next: ModelsSection) { onSectionChange?.(next); }
+  useEffect(() => { setQuery(''); setSearch(''); setState(''); resetPage(); }, [section]);
   function editSource(id: string) { const service = services.find(item => item.id === id); if (admin && service) onEditService?.(service); }
   function chooseService(id: string) { setServiceID(id); resetPage(); }
   const summary = view?.summary;
   return <div className="data-workspace">
     <div className="workspace-navigation"><section className="workspace-instance-bar"><label>模型 / 公开状态来源<select value={serviceID} onChange={event => chooseService(event.target.value)}><option value="">全部实例与状态来源</option>{eligible.map(item => <option key={item.id} value={item.id}>{item.name}{!item.enabled ? ' · 已暂停' : ''}</option>)}</select></label><div className="workspace-instance-meta"><span>目录、历史调用、站方状态分别保留</span><small>视图整理 {time(view?.collected_at)} · 不触发推理</small></div>{serviceID && admin && onEditService && <Button className="secondary" onClick={() => editSource(serviceID)}><Icon name="edit" />接入设置</Button>}</section>
-    <WorkspaceTabs label="大模型视图" items={sections} value={section} onChange={chooseSection} /></div>
-    <WorkspaceSection title={sections.find(item => item.key === section)!.label} description={sectionDescriptions[section]} />
+    </div>
+    <WorkspaceSection title={logsOnly ? '大模型日志' : sections.find(item => item.key === section)!.label} description={logsOnly ? '按实例查看已有调用聚合、样本结果与来源时间窗。' : sectionDescriptions[section]} />
     {error && <p className="banner error" role="alert">{error}{view ? ' 当前保留最近一次成功读取的数据，请核对采集时间。' : ''}</p>}
     {retained && !error && <p className="banner notice" role="status">当前视图超过一分钟未成功同步，保留记录已标为过期；恢复连接后重新判断。</p>}
     {!view && !error && <p className="workspace-loading" role="status">正在读取模型工作区…</p>}
