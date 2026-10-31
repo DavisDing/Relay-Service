@@ -25,6 +25,7 @@ export type NetworkUsage = { at: string; upload_bytes: number; download_bytes: n
 export type NetworkUsageGroup = { dimension: 'client' | 'rule' | 'chain'; label: string; upload_bytes: number; download_bytes: number; samples: number };
 export type NetworkNodeSample = { at: string; state: string; delay_ms?: number; checked_at?: string; freshness: string };
 export type NetworkCoverage = {
+  subscription_sources?: { core_state: string; provider_entries: number; embedded_providers: number; core_subscriptions: number; control_state: string; control_subscriptions: number; state: string; message: string };
   started_at?: string; last_sample_at?: string; source_states: Record<string, string>;
   truncated: boolean; notes: string[];
 };

@@ -46,7 +46,8 @@ export function CheckDetails({ check }: { check?: Check }) {
       <p>仅表示服务商公布的状态，当前账号或网络下的实际可用性还需独立证据。</p>
     </>}
     {details.mihomo && <>
-      <strong>机场订阅额度（{details.mihomo.subscription_count}）</strong>
+      <strong>机场订阅额度（{details.mihomo.subscription_state === 'not_exposed' ? '未知' : details.mihomo.subscription_count}）</strong>
+      {details.mihomo.subscription_state === 'not_exposed' && <p>核心返回 {details.mihomo.provider_count} 个 provider，其中 {details.mihomo.embedded_provider_count} 个仅为组或内联节点视图，无法据此还原机场订阅及额度。可在网络代理接入独立控制层；核心未提供不表示没有订阅。</p>}
       <ul>{details.mihomo.subscriptions.map(sub => <li key={sub.name}><b>{sub.name}</b> · {({unknown:'额度未知',available:'有剩余额度',exhausted:'额度已耗尽',expired:'已到期'} as Record<string,string>)[sub.usage_state] || '未知'}
         {sub.info && <> · 上传 {sub.upload_bytes != null ? bytes(sub.upload_bytes) : '未提供'} · 下载 {sub.download_bytes != null ? bytes(sub.download_bytes) : '未提供'} · 总额 {sub.total_bytes != null && sub.total_bytes > 0 ? bytes(sub.total_bytes) : '未提供'} · 到期 {sub.expire_seconds != null && sub.expire_seconds > 0 ? time(new Date(sub.expire_seconds*1000).toISOString()) : '未提供'}</>}
         {sub.used_bytes != null && <> · 已用 {bytes(sub.used_bytes)}</>}{sub.remaining_bytes != null && <> · 剩余 {bytes(sub.remaining_bytes)}</>}

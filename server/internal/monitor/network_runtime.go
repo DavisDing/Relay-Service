@@ -37,8 +37,16 @@ func (e *Engine) RunNetwork(ctx context.Context) error {
 		type config struct {
 			rec      serviceRecord
 			settings networkSettingsRecord
+			snapshot NetworkView
 		}
 		configs := map[string]config{}
+		// Only a new worker needs saved metadata, not every ten-second sync.
+		active := map[string][2]int64{}
+		runtime.mu.RLock()
+		for id, w := range runtime.workers {
+			active[id] = [2]int64{w.rec.Service.Generation, w.revision}
+		}
+		runtime.mu.RUnlock()
 		err := e.store.View(ctx, func(tx storage.Tx) error {
 			after := ""
 			for {
@@ -60,7 +68,13 @@ func (e *Engine) RunNetwork(ctx context.Context) error {
 						return err
 					}
 					if saved.Settings.Enabled {
-						configs[rec.Service.ID] = config{rec, saved}
+						var snapshot NetworkView
+						if version, ok := active[rec.Service.ID]; saved.Settings.ControlBaseURL != "" && (!ok || version != [2]int64{rec.Service.Generation, saved.Revision}) {
+							if err := tx.Get(networkSnapshotBucket, rec.Service.ID, &snapshot); err != nil && !errors.Is(err, storage.ErrNotFound) {
+								return err
+							}
+						}
+						configs[rec.Service.ID] = config{rec: rec, settings: saved, snapshot: snapshot}
 					}
 				}
 				if len(rows) < 200 {
@@ -95,6 +109,7 @@ func (e *Engine) RunNetwork(ctx context.Context) error {
 			cfg := configs[id]
 			workerCtx, cancel := context.WithCancel(ctx)
 			w := &networkWorker{historyGeneration: cfg.settings.HistoryGeneration, rec: cfg.rec, settings: cfg.settings.Settings, controlCipher: cfg.settings.ControlCipher, revision: cfg.settings.Revision, cancel: cancel, view: emptyNetworkView(id, cfg.rec.Service.Generation), logs: []NetworkLog{}, logState: "connecting", previous: map[string]NetworkConnection{}, lastNodeSamples: map[string]NetworkNodeSample{}, pendingNodes: map[string]NetworkNodeSample{}, pendingLogs: []NetworkLog{}}
+			w.restoreProfileSnapshot(cfg.snapshot)
 			runtime.workers[id] = w
 			wg.Add(1)
 			go func() { defer wg.Done(); e.runNetworkWorker(workerCtx, w) }()

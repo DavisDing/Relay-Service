@@ -60,7 +60,10 @@ export async function api<T>(path: string, method = 'GET', body?: unknown): Prom
     }
     assertCurrent();
     if (!json || typeof json !== 'object' || Array.isArray(json)) throw new APIError('Relay 返回了无效响应，请检查连接。', response.status);
-    if (!response.ok) throw new APIError(errorMessage(json.error?.code, response.status), response.status);
+    if (!response.ok) {
+      const loginURL = json.error?.code === 'origin_rejected' ? trustedLoginURL(json.error?.login_url) : '';
+      throw new APIError(loginURL ? `此实例仅允许通过 ${loginURL} 登录，请使用该地址。` : errorMessage(json.error?.code, response.status), response.status);
+    }
     return json;
   } finally {
     pendingRequests.delete(controller);
@@ -92,4 +95,10 @@ export function errorMessage(code: string, status: number): string {
   };
   return messages[code] || (status === 401 ? messages.unauthorized : status === 403 ? messages.forbidden
     : status === 429 ? messages.rate_limited : status >= 500 ? messages.internal_error : '操作失败，请检查输入后重试。');
+}
+
+// Accept only an origin, never a path, credentials, script URL or redirect target.
+export function trustedLoginURL(value: unknown): string {
+ if (typeof value !== 'string') return '';
+ try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password && url.pathname === '/' && !url.search && !url.hash ? url.origin : ''; } catch { return ''; }
 }

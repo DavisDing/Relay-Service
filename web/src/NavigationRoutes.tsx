@@ -30,3 +30,16 @@ export function workspaceDestination(page: string) {
 }
 export function modelPage(section: ModelsSection) { return modelPages.find(item => item.section === section)!; }
 export function networkPage(section: NetworkSection) { return networkPages.find(item => item.section === section)!; }
+
+// Stable, explicit routes. Only known application paths get the SPA shell.
+const pagePaths: Record<string, string> = {
+ home: '/', services: '/services', alerts: '/alerts', devices: '/devices', settings: '/settings', diagnostic: '/diagnostic',
+ logs: '/logs', 'logs-services': '/logs/services', 'logs-models': '/logs/models', 'logs-network': '/logs/network',
+ ...Object.fromEntries(modelPages.map(page => [page.key, page.section === 'overview' ? '/models' : '/models/' + page.section])),
+ ...Object.fromEntries(networkPages.map(page => [page.key, page.section === 'overview' ? '/network' : '/network/' + page.section])),
+};
+export function pagePath(page: string) { return pagePaths[page] || '/'; }
+export function pageFromPath(path: string) {
+ const normalized = path === '/' ? '/' : path.replace(/\/$/, '');
+ return Object.entries(pagePaths).find(([, value]) => value === normalized)?.[0] || 'home';
+}

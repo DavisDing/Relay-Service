@@ -35,6 +35,24 @@ func Handler() http.Handler {
 		} else {
 			w.Header().Set("Cache-Control", "public, max-age=3600")
 		}
+		if applicationPath(r.URL.Path) {
+			w.Header().Set("Cache-Control", "no-store")
+			clone := r.Clone(r.Context())
+			u := *r.URL
+			u.Path = "/"
+			u.RawPath = ""
+			clone.URL = &u
+			files.ServeHTTP(w, clone)
+			return
+		}
 		files.ServeHTTP(w, r)
 	})
+}
+
+func applicationPath(path string) bool {
+	switch strings.TrimSuffix(path, "/") {
+	case "", "/services", "/alerts", "/devices", "/settings", "/diagnostic", "/models", "/models/models", "/models/channels", "/models/traffic", "/models/status", "/models/probes", "/network", "/network/usage", "/network/subscriptions", "/network/nodes", "/network/connections", "/network/logs", "/logs", "/logs/services", "/logs/models", "/logs/network":
+		return true
+	}
+	return false
 }

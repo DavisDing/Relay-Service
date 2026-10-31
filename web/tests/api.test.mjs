@@ -120,3 +120,11 @@ test('API failures use Chinese stable codes and never expose arbitrary server er
   globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => null });
   await assert.rejects(api('/fixture'), /无效响应/);
 });
+
+test('origin rejection names only the configured safe login origin', async () => {
+ const { api, trustedLoginURL } = await freshAPI();
+ globalThis.fetch = async () => ({ ok: false, status: 403, json: async () => ({error: { code: 'origin_rejected', login_url: 'https://relay.example.test:16666', message: '<unsafe upstream>' }}) });
+ await assert.rejects(api('/auth/login', 'POST', {}), /https:\/\/relay.example.test:16666/);
+ for (const value of ['javascript:alert(1)', 'https://user:secret@example.test', 'https://example.test/redirect', 'https://example.test?secret=x', null]) assert.equal(trustedLoginURL(value), '');
+ assert.equal(trustedLoginURL('https://relay.example.test:16666'), 'https://relay.example.test:16666');
+});

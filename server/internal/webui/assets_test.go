@@ -42,3 +42,22 @@ func TestWebHandlerDoesNotServeAPIOrWrites(t *testing.T) {
 		}
 	}
 }
+
+func TestDeepLinksServeShellAndUnknownRoutesStay404(t *testing.T) {
+	for _, path := range []string{"/models", "/models/channels", "/network/subscriptions", "/network/nodes/", "/logs", "/logs/models", "/settings"} {
+		for _, method := range []string{"GET", "HEAD"} {
+			w := httptest.NewRecorder()
+			Handler().ServeHTTP(w, httptest.NewRequest(method, path, nil))
+			if w.Code != 200 || w.Header().Get("Cache-Control") != "no-store" || method == "GET" && !strings.Contains(w.Body.String(), `id="root"`) {
+				t.Fatalf("deep link %s %s: %d %s", method, path, w.Code, w.Body.String())
+			}
+		}
+	}
+	for _, path := range []string{"/models/missing", "/logs.js", "/assets/missing.js", "/api/v1/missing", "/health/missing"} {
+		w := httptest.NewRecorder()
+		Handler().ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		if w.Code != 404 {
+			t.Fatalf("SPA swallowed missing resource: %s %d", path, w.Code)
+		}
+	}
+}

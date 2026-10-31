@@ -3,11 +3,11 @@ import { createRoot } from 'react-dom/client';
 import './style.css';
 import './navigation.css';
 import { Navigation } from './Navigation';
-import { modelPage, networkPage, workspaceDestination } from './NavigationRoutes';
+import { modelPage, networkPage, workspaceDestination, pagePath, pageFromPath } from './NavigationRoutes';
 import type { ModelsSection } from './models-types';
 import type { NetworkSection } from './network-types';
 import { Button, Icon, Modal, ThemeControl, Toast } from './ui';
-import { api, APIError, APIRequestSupersededError, invalidateAPIRequests } from './api';
+import { api, APIError, APIRequestSupersededError, invalidateAPIRequests, trustedLoginURL } from './api';
 import { RetentionPanel } from './RetentionPanel';
 import { DatabasePanel } from './DatabasePanel';
 import type { Principal, Check, Service, Alert, Device, AlertPage, Form, Confirmation } from './types';
@@ -84,12 +84,14 @@ function App() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState('home');
+  const [entryRoute] = useState(() => pageFromPath(window.location.pathname));
+  const [tab, setTab] = useState(() => workspaceDestination(entryRoute)?.workspace || entryRoute);
+  const [loginURL, setLoginURL] = useState('');
   const [networkRefresh, setNetworkRefresh] = useState(0);
   const [networkService, setNetworkService] = useState('');
   const [modelService, setModelService] = useState('');
-  const [modelSection, setModelSection] = useState<ModelsSection>('overview');
-  const [networkSection, setNetworkSection] = useState<NetworkSection>('overview');
+  const [modelSection, setModelSection] = useState<ModelsSection>(() => { const route = workspaceDestination(entryRoute); return route?.workspace === 'models' ? route.section : 'overview'; });
+  const [networkSection, setNetworkSection] = useState<NetworkSection>(() => { const route = workspaceDestination(entryRoute); return route?.workspace === 'network' ? route.section : 'overview'; });
   const activePage = tab === 'models' ? modelPage(modelSection).key : tab === 'network' ? networkPage(networkSection).key : tab;
   const [alertPage, setAlertPage] = useState('');
   const [loadedAlertPage, setLoadedAlertPage] = useState('');
@@ -141,10 +143,8 @@ function App() {
     setAlertNext('');
     setAlertsMore(false);
     setAckCursor(0);
-    setTab('home');
     setNetworkService('');
     setModelService('');
-    setModelSection('overview'); setNetworkSection('overview');
   }, []);
 
   const refresh = useCallback(async () => {
@@ -183,12 +183,16 @@ function App() {
 
   useEffect(() => {
     let active = true;
-    Promise.allSettled([api<Principal>('/auth/me'), api<{ initialized: boolean }>('/info')])
+    Promise.allSettled([api<Principal>('/auth/me'), api<{ initialized: boolean; login_url?: string }>('/info')])
       .then(([identity, info]) => {
         if (!active) return;
         if (identity.status === 'fulfilled') setMe(identity.value.data as Principal);
         if (info.status === 'fulfilled' && !(info.value.data as { initialized: boolean }).initialized) {
           setAuthMode('bootstrap');
+        }
+        if (info.status === 'fulfilled' && info.value.data.login_url) {
+          const url = trustedLoginURL(info.value.data.login_url);
+          if (url && url !== window.location.origin) setLoginURL(url);
         }
         if (info.status === 'rejected') setError('无法读取 Relay 状态，请检查连接后刷新页面。');
       }).finally(() => { if (active) setChecking(false); });
@@ -252,6 +256,7 @@ function App() {
 
   async function auth(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (loginURL) { setError('此实例固定了登录入口，请使用下方地址。'); return; }
     const data = new FormData(event.currentTarget);
     await action(async ensureCurrent => {
       const credentials = { username: String(data.get('username')), password: String(data.get('password')) };
@@ -331,7 +336,9 @@ function App() {
   const canAck = unreadCursors.length > 0 && !skippedUnreadPage && loadedAlertPage === alertPage;
   const incidentCount = services.filter(service => service.open_incident || service.open_restriction).length;
 
-  function navigate(page: string, serviceID?: string) {
+  function navigate(page: string, serviceID?: string, recordHistory = true) {
+    const path = pagePath(page);
+    if (recordHistory && window.location.pathname !== path) window.history.pushState(null, '', path);
     const destination = workspaceDestination(page);
     if (destination?.workspace === 'models') setModelSection(destination.section);
     if (destination?.workspace === 'network') setNetworkSection(destination.section);
@@ -341,6 +348,14 @@ function App() {
     setTab(destination?.workspace || page); setError(''); window.scrollTo(0, 0);
     requestAnimationFrame(() => document.getElementById('workspace-title')?.focus({ preventScroll: true }));
   }
+
+  useEffect(() => {
+    const onBack = () => navigate(pageFromPath(window.location.pathname), undefined, false);
+    window.addEventListener('popstate', onBack);
+    const canonical = pagePath(pageFromPath(window.location.pathname));
+    if (window.location.pathname !== canonical) window.history.replaceState(null, '', canonical);
+    return () => window.removeEventListener('popstate', onBack);
+  }, []);
 
   if (checking) return (
     <main className="login" aria-busy="true">
@@ -375,7 +390,9 @@ function App() {
       <span className="eyebrow">NAS OPERATIONS</span>
       <h1>Relay</h1>
       <p className="sub">服务状态，一处掌握</p>
+      {loginURL && <p className="banner notice login-entry" role="status">此实例仅允许通过固定入口登录：<a href={loginURL}>{loginURL}</a>。当前地址无法建立登录会话。</p>}
       <form onSubmit={auth}>
+        <fieldset disabled={!!loginURL || busy}>
         <h2>{authMode === 'bootstrap' ? '初始化管理员' : '管理员登录'}</h2>
         {authMode === 'bootstrap' && (
           <label>部署初始化令牌<input name="token" type="password" autoComplete="off" required /></label>
@@ -388,6 +405,7 @@ function App() {
         </label>
         {error && <p role="alert" className="error">{error}</p>}
         <Button type="submit" loading={busy}>{authMode === 'bootstrap' ? '创建管理员' : '登录'}</Button>
+        </fieldset>
       </form>
       {authMode === 'login' && <p className="sub">首次使用？请联系部署管理员获取登录信息，登录后按提示设置正式密码。</p>}
       <small>凭据只在服务端使用。公网访问请使用可信 HTTPS 入口。</small>
@@ -433,7 +451,7 @@ function App() {
           onNetwork={service => navigate('network', service.id)}
           onModels={service => navigate('models', service.id)}
           onAdd={() => { setError(''); setForm({ ...defaults }); }}
-          onAlerts={() => { setAlertPage(''); setAlertPages([]); setTab('alerts'); }}
+          onAlerts={() => navigate('alerts')}
           onHistory={showHistory} onEdit={service => { setError(''); setForm(toInput(service)); }}
           onToggle={toggle} onCheck={service => action(async ensureCurrent => {
             await api('/services/' + service.id + '/checks', 'POST', {

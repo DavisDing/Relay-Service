@@ -221,7 +221,7 @@ func networkCopyView(v NetworkView) NetworkView {
 	return c
 }
 func emptyNetworkView(id string, generation int64) NetworkView {
-	return NetworkView{NodeIdentityVersion: networkNodeIdentityVersion, ServiceID: id, Generation: generation, State: "waiting", Message: "等待后台采集。", Settings: networkDefaults(generation), Subscriptions: []NetworkSubscription{}, Nodes: []NetworkNode{}, Connections: []NetworkConnection{}, Logs: []NetworkLog{}, Usage: []NetworkUsage{}, NodeHistory: []NetworkNodeSample{}, Coverage: NetworkCoverage{SourceStates: map[string]string{}, Notes: []string{"节点结果来自已有检测；未加载的订阅节点没有当前检测证据。", "首次接入前的历史及采集中断均不补造。"}}}
+	return NetworkView{NodeIdentityVersion: networkNodeIdentityVersion, ServiceID: id, Generation: generation, State: "waiting", Message: "等待后台采集。", Settings: networkDefaults(generation), Subscriptions: []NetworkSubscription{}, Nodes: []NetworkNode{}, Connections: []NetworkConnection{}, Logs: []NetworkLog{}, Usage: []NetworkUsage{}, NodeHistory: []NetworkNodeSample{}, Coverage: NetworkCoverage{SubscriptionSources: &NetworkSubscriptionSources{CoreState: "waiting", State: "unavailable", Message: "等待订阅来源采集；当前机场订阅数量与额度未知。"}, SourceStates: map[string]string{}, Notes: []string{"节点结果来自已有检测；未加载的订阅节点没有当前检测证据。", "首次接入前的历史及采集中断均不补造。"}}}
 }
 func (e *Engine) NetworkView(ctx context.Context, id string, q NetworkQuery) (NetworkView, error) {
 	var rec serviceRecord
@@ -326,6 +326,14 @@ func (e *Engine) NetworkView(ctx context.Context, id string, q NetworkQuery) (Ne
 					// subscriptions. Refresh inventory without deleting saved history.
 					out.Nodes = []NetworkNode{}
 					out.Subscriptions = []NetworkSubscription{}
+					for _, sub := range cached.Subscriptions {
+						if sub.Source == "control" {
+							sub.Nodes = nil
+							sub.NodeCountKnown = false
+							out.Subscriptions = append(out.Subscriptions, sub)
+						}
+					}
+					out.Coverage.SubscriptionSources = &NetworkSubscriptionSources{CoreState: "waiting", State: "unavailable", ControlState: "waiting", ControlSubscriptions: len(out.Subscriptions), Message: "订阅来源等待重新采集；保留的控制层配置清单与额度不是当前证据，机场订阅数量未知。"}
 					out.Coverage.Notes = append(out.Coverage.Notes, "节点与订阅快照需重新采集；已有历史按原身份保留至到期。")
 				}
 				out.Settings = saved.Settings

@@ -113,6 +113,7 @@ func (e *Engine) runNetworkStream(ctx context.Context, w *networkWorker, kind st
 			return
 		}
 		failureState := "disconnected"
+		plannedRenewal := false
 		client, origin, token, closeClient, err := e.networkClient(ctx, w, false)
 		if err == nil {
 			streamCtx, cancel := context.WithTimeout(ctx, 65*time.Second)
@@ -126,6 +127,8 @@ func (e *Engine) runNetworkStream(ctx context.Context, w *networkWorker, kind st
 			if requestErr == nil {
 				w.mu.Lock()
 				if kind == "logs" {
+					backoff = time.Second
+					w.logConnectedAt = e.now()
 					w.networkCollectorState(kind, "available", e.now())
 				}
 				w.mu.Unlock()
@@ -146,12 +149,19 @@ func (e *Engine) runNetworkStream(ctx context.Context, w *networkWorker, kind st
 					}
 					backoff = time.Second
 				}
+				plannedRenewal = errors.Is(streamCtx.Err(), context.DeadlineExceeded)
 				resp.Body.Close()
 			}
 			cancel()
 			closeClient()
 		}
+		if ctx.Err() != nil {
+			return
+		}
 		w.mu.Lock()
+		if kind == "logs" && plannedRenewal {
+			failureState = "renewing"
+		}
 		w.networkCollectorState(kind, failureState, e.now())
 		if kind != "logs" {
 			if kind == "traffic" {
@@ -254,6 +264,7 @@ func (w *networkWorker) applyStream(kind string, body []byte, now time.Time) err
 		}
 		w.appendNetworkLog(now, level, class, sanitizeNetworkLog(raw, w.sensitive))
 		w.logState = "available"
+		w.logDisconnectedAt = time.Time{}
 	}
 	if w.sourceUpdated == nil {
 		w.sourceUpdated = map[string]time.Time{}
@@ -264,13 +275,37 @@ func (w *networkWorker) applyStream(kind string, body []byte, now time.Time) err
 
 // Callers hold w.mu; event text never includes upstream messages or addresses.
 func (w *networkWorker) networkCollectorState(source, state string, now time.Time) {
+	if source == "logs" {
+		switch state {
+		case "disconnected", "renewing":
+			if !w.logConnectedAt.IsZero() && now.Sub(w.logConnectedAt) >= 15*time.Second {
+				w.logDisconnectedAt = time.Time{}
+			}
+			w.logConnectedAt = time.Time{}
+			if w.logDisconnectedAt.IsZero() {
+				w.logDisconnectedAt = now
+			}
+			if now.Sub(w.logDisconnectedAt) < 15*time.Second {
+				if state == "renewing" {
+					state = "connecting"
+				} else {
+					state = "reconnecting"
+				}
+			} else {
+				state = "disconnected"
+			}
+		case "unauthorized":
+			w.logDisconnectedAt = time.Time{}
+			w.logConnectedAt = time.Time{}
+		}
+	}
 	previous := w.view.Coverage.SourceStates[source]
 	if source == "logs" {
 		previous = w.logState
 		w.logState = state
 	}
 	w.view.Coverage.SourceStates[source] = state
-	if previous == state {
+	if previous == state || state == "reconnecting" || state == "connecting" {
 		return
 	}
 	name := map[string]string{"logs": "日志流", "traffic": "流量流", "memory": "内存流", "storage": "历史存储"}[source]
@@ -308,6 +343,7 @@ func networkSequence(n uint64) string { return sequenceKey(n) }
 
 func (w *networkWorker) applyInventory(providerBody []byte, providerErr error, proxyBody []byte, proxyErr error, token string, now time.Time) {
 	subs := []NetworkSubscription{}
+	evidence := &NetworkSubscriptionSources{CoreState: "unavailable"}
 	nodes := []NetworkNode{}
 	// /proxies keys are unique within this core. Providers describe membership,
 	// never a second identity or an alternative source of current health.
@@ -346,12 +382,15 @@ func (w *networkWorker) applyInventory(providerBody []byte, providerErr error, p
 		if json.Unmarshal(providerBody, &input) != nil || input.Providers == nil {
 			providerErr = ErrValidation
 		} else {
+			evidence.ProviderEntries = len(input.Providers)
+			evidence.CoreState = "available"
 			for _, name := range mihomoSortedKeys(input.Providers) {
 				if !networkLabel(name) || networkReflected(name, token) || w.networkSensitive(name) {
 					continue
 				}
 				p := input.Providers[name]
-				if !mihomoSubscriptionProvider(p) || p.VehicleType == "" && groupNames[name] {
+				if !mihomoSubscriptionProvider(p) || p.VehicleType == "" && p.Info == nil && groupNames[name] {
+					evidence.EmbeddedProviders++
 					continue
 				}
 				id := networkID("provider", name)
@@ -400,6 +439,11 @@ func (w *networkWorker) applyInventory(providerBody []byte, providerErr error, p
 			nodes[i].SubscriptionName = nodes[i].Subscriptions[0].Name
 		}
 	}
+	evidence.CoreSubscriptions = len(subs)
+	if len(subs) == 0 && evidence.EmbeddedProviders > 0 {
+		evidence.CoreState = "not_exposed"
+	}
+	w.view.Coverage.SubscriptionSources = evidence
 	w.coreSubs = subs
 	w.coreNodes = nodes
 	w.coreCatalogStamp = networkID(catalogIDs...)
@@ -497,6 +541,7 @@ func (w *networkWorker) rebuildNetworkInventory(now time.Time) {
 	}
 	subs = safeSubs
 	w.view.Subscriptions = subs
+	w.updateSubscriptionSources()
 	w.view.Nodes = out
 	liveIDs := map[string]bool{}
 	for _, n := range out {

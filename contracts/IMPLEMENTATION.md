@@ -108,7 +108,7 @@ Web 总览驾驶舱的状态分布与计数来自已同步服务，过期/未观
 
 `GET /api/v1/network/{service_id}?section=overview|usage|subscriptions|nodes|connections|logs`读取共享后台快照，不直接代理任意上游请求。只支持有效mihomo服务；分页默认50、最大200，数字cursor为局部偏移。筛选为q/subscription/state，节点历史用node_id；hours仅1/24/168。用量完整窗口按时间聚合至最多180点，不用分页丢弃后半段。节点当前页增加`availability_24h`：有效新鲜源检测按checked_at去重，success/failure及可空success_rate表示样本成功率，不是连续在线时长或SLA；96个15分钟区间分别表示成功、出现失败或无样本，未知不补绿。同一区间有失败优先显示失败。历史弹窗独立请求24小时/7天记录，保留源检测时间和Relay观测时间，采集时间at不冒充检测时间。
 
-provider的`vehicleType=Compatible/Inline`不属于外部订阅；缺失类型且与核心非节点组同名时，工作区也排除该组。真实HTTP/File provider不按名称黑名单过滤。快照身份版本3要求重新采集旧节点/订阅目录，不删除已有历史。当前页可用性与单节点历史经通用Store的可选精确key批量Scan读取，每批最多500个key，Memory/SQLite/PostgreSQL行为一致；没有SQL结构变更。
+provider的`vehicleType=Compatible/Inline`在没有明确正数总额或到期证据时不计为机场订阅；有可信subscriptionInfo时保留，不能仅按vehicleType丢弃。缺失类型、无info且与核心非节点组同名时，工作区排除该组。真实HTTP/File provider不按名称黑名单过滤。`coverage.subscription_sources`分别返回core_state/provider_entries/embedded_providers/core_subscriptions、control_state/control_subscriptions及总state/message；核心仅暴露组时为not_exposed，控制层不可读且无核心订阅证据时总状态unavailable，数量未知。保留旧控制层元数据并标明非当前证据，重启恢复限定同一服务/代际/设置修订且不恢复节点健康或绑定。快照身份版本4要求重新采集旧节点/订阅目录，不删除已有历史。结构化流量/到期标签在核心与YAML目录共用非节点过滤。当前页可用性与单节点历史经通用Store的可选精确key批量Scan读取，每批最多500个key，Memory/SQLite/PostgreSQL行为一致；没有SQL结构变更。
 
 管理员可GET/PUT同路径`/settings`，POST`/subscriptions/import`；写入沿用首次改密、CSRF、origin、generation和同事务脱敏审计。控制地址仅origin，控制token独立加密且不回显；换址有旧token时必须新输或显式清除。元数据导入最多100订阅/总5000节点，整个请求沿用64KiB限制；网页文件上限60KiB以留出包装空间，拒绝原始配置/链接/凭据字段，导入不创建检测证据。
 
@@ -130,3 +130,12 @@ provider的`vehicleType=Compatible/Inline`不属于外部订阅；缺失类型�
 API只读既有Store中的当前同代检查，拒用旧代或未来完成时间；刷新不触发采集/推理。模型ID包含实例+别名，渠道部署身份包含实例+部署ID/别名/上游模型/协议/匿名端点；调用关联需部署唯一且别名匹配，无法关联保留未知。相同实例别名聚合现有单窗口样本，不累加多轮检查；缓存不计上游成功，未知不计已知结果分母。历史成功/失败/混合样本不表示当前可用或最近一次请求结果。设备服务摘要增加只读generation以校验作用域；设备与管理员均可读安全投影，无上游URL、凭据、正文或原始日志；采集配置仍仅管理员通过原服务编辑器修改。
 
 Web新增同级“大模型”入口及六页签；服务监控仅保留摘要和跳转，历史弹窗保留原检查证据。目录、渠道、调用和公开状态分别呈现来源/权限/时效；公开组件不自动映射到同名模型。模型探针页明确未实现，无假执行按钮。无新依赖或模型存储迁移；完整增量请求账本、费用/延迟/错误明细和主动可用性/能力/质量探针仍未实现。大模型与网络代理共享实例/范围导航、列表工具栏、指标条及分页，沿用全站按钮与主题token；内容实色、导航轻透，减少动态/透明度与高对比偏好独立适配。初始交接见docs/nas/MODELS-WORKSPACE-HERMES-HANDOFF-2026-10-29.md，本次UI修订见docs/nas/NETWORK-MODELS-REFINEMENT-2026-10-29.md。
+
+
+### 入口与页面路由（2026-10-31）
+
+公开`GET /api/v1/info`增加`login_url`，无固定origin时为空；写请求origin拒绝仍403，错误对象增加同字段供错误入口指引。固定HTTPS入口不同时开放LAN HTTP会话，不关闭Secure Cookie绕过。Web只接受HTTP(S) origin作为可点击入口，不接受路径、查询、userinfo或脚本URL。
+
+页面路径由`NavigationRoutes.tsx`显式映射：首页`/`、服务`/services`、告警`/alerts`、设备`/devices`、设置`/settings`、诊断`/diagnostic`，模型`/models`及`/models/{models,channels,traffic,status,probes}`，网络`/network`及`/network/{usage,subscriptions,nodes,connections,logs}`，日志`/logs`及`/logs/{services,models,network}`。History API负责导航和popstate恢复，登录失效不清除当前页面路径；实例/筛选不写入URL。后端已知页面GET/HEAD回退嵌入入口且no-store，未知路径/API/资源不回退，非读取方法405。无新增依赖。
+
+核心日志流的65秒计划换连为connecting，短暂异常为reconnecting；失败持续至少15秒后在后续重试显示disconnected，unauthorized不延迟。有效日志帧重置失败窗口，连续连接至少15秒也视为恢复；HTTP响应头本身不清除连续失败起点，避免快速EOF掩盖故障。取消采集不制造断流事件。

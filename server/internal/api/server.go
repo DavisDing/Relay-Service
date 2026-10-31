@@ -51,8 +51,9 @@ type errorEnvelope struct {
 	Error apiError `json:"error"`
 }
 type apiError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code     string `json:"code"`
+	Message  string `json:"message"`
+	LoginURL string `json:"login_url,omitempty"`
 }
 type request struct {
 	r *http.Request
@@ -154,7 +155,7 @@ func (s *Server) routes() {
 			s.fail(w, err)
 			return
 		}
-		s.success(w, r, id, map[string]any{"capabilities": []string{"service-monitoring", "read-only-devices"}, "version": s.options.Version, "initialized": initialized})
+		s.success(w, r, id, map[string]any{"capabilities": []string{"service-monitoring", "read-only-devices"}, "version": s.options.Version, "initialized": initialized, "login_url": s.options.AllowedOrigin})
 	})
 	s.handle("POST /api/v1/auth/bootstrap", route{public: true, write: true, fn: func(q request) (any, int, error) {
 		var p bootstrapPayload
@@ -377,7 +378,11 @@ func (s *Server) handle(pattern string, rt route) {
 			sessionCookie, cookieErr := r.Cookie("relay_session")
 			cookieAuth := cookieErr == nil && sessionCookie.Value != ""
 			if !s.sameOrigin(r) && (!bearerToken(r) || cookieAuth) {
-				writeError(w, http.StatusForbidden, "origin_rejected", "访问来源不受信任，请核对 Relay 地址配置。")
+				message := "访问来源不受信任，请核对 Relay 地址配置。"
+				if s.options.AllowedOrigin != "" {
+					message = "此实例仅允许通过 " + s.options.AllowedOrigin + " 登录，请使用该地址。"
+				}
+				writeJSON(w, http.StatusForbidden, errorEnvelope{Error: apiError{Code: "origin_rejected", Message: message, LoginURL: s.options.AllowedOrigin}})
 				return
 			}
 			if cookieAuth && !validCSRF(r) {

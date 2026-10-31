@@ -13,7 +13,7 @@ const networkNodeBucket = "network.nodes"
 const networkLogsBucket = "network.logs"
 const networkExpiryBucket = "network.expiry"
 const networkItemLimit = 5000
-const networkNodeIdentityVersion = 3
+const networkNodeIdentityVersion = 4
 
 type NetworkQuery struct {
 	Section, Cursor, Q, Subscription, State, Node string
@@ -145,12 +145,23 @@ type NetworkOverview struct {
 	ActiveConfig      string `json:"active_config,omitempty"`
 	CounterReset      bool   `json:"counter_reset"`
 }
+type NetworkSubscriptionSources struct {
+	CoreState            string `json:"core_state"`
+	ProviderEntries      int    `json:"provider_entries"`
+	EmbeddedProviders    int    `json:"embedded_providers"`
+	CoreSubscriptions    int    `json:"core_subscriptions"`
+	ControlState         string `json:"control_state"`
+	ControlSubscriptions int    `json:"control_subscriptions"`
+	State                string `json:"state"`
+	Message              string `json:"message"`
+}
 type NetworkCoverage struct {
-	StartedAt    *time.Time        `json:"started_at,omitempty"`
-	LastSampleAt *time.Time        `json:"last_sample_at,omitempty"`
-	SourceStates map[string]string `json:"source_states"`
-	Truncated    bool              `json:"truncated"`
-	Notes        []string          `json:"notes"`
+	SubscriptionSources *NetworkSubscriptionSources `json:"subscription_sources,omitempty"`
+	StartedAt           *time.Time                  `json:"started_at,omitempty"`
+	LastSampleAt        *time.Time                  `json:"last_sample_at,omitempty"`
+	SourceStates        map[string]string           `json:"source_states"`
+	Truncated           bool                        `json:"truncated"`
+	Notes               []string                    `json:"notes"`
 }
 type NetworkView struct {
 	NodeIdentityVersion int                   `json:"node_identity_version"`
@@ -199,6 +210,8 @@ type networkWorker struct {
 	cancel            context.CancelFunc
 	view              NetworkView
 	logs              []NetworkLog
+	logConnectedAt    time.Time
+	logDisconnectedAt time.Time
 	logState          string
 	logSequence       uint64
 	previous          map[string]NetworkConnection

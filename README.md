@@ -13,7 +13,7 @@ docker compose -f docker-compose.yaml up -d
 docker compose -f docker-compose.yaml logs --tail=100 relay
 ```
 
-打开 `http://NAS实际地址:8787`。首次用户名为 `admin`，实例独立临时密码见 Relay 日志；首次登录必须设置正式账号密码。密钥、SQLite 数据和临时凭据由 Relay 自动初始化到 `relay-data` 卷，改密成功后删除临时文件。不需要 PostgreSQL、`.env`、宿主 IP 或外部网络。无数据库服务、同步进程或双写任务；单实例 SQLite 使用单连接、短事务和索引查询。
+默认部署未设置 `RELAY_PUBLIC_URL`，打开 `http://NAS实际地址:8787`；若已设置该变量，必须打开它指定的固定地址。首次用户名为 `admin`，实例独立临时密码见 Relay 日志；首次登录必须设置正式账号密码。密钥、SQLite 数据和临时凭据由 Relay 自动初始化到 `relay-data` 卷，改密成功后删除临时文件。不需要 PostgreSQL、`.env`、宿主 IP 或外部网络。无数据库服务、同步进程或双写任务；单实例 SQLite 使用单连接、短事务和索引查询。
 
 镜像默认以 root（UID/GID `0:0`）直接运行 `/relay`，Relay 本身作为 PID 1；无需填写 UID/GID 或增加初始化服务。只应挂载 Relay 专用目录，避免将共享父目录作为 `/data`。
 
@@ -43,7 +43,7 @@ docker compose -f docker-compose.yaml logs --tail=100 relay
 | `RELAY_SQLITE_PATH` | 数据目录下 `relay.sqlite` | 自定义 SQLite 文件路径；使用 NAS 本机磁盘，不放 SMB/NFS/同步盘；更改前迁移原文件与 WAL 数据 |
 | `RELAY_DATABASE_URL` | 空，使用 SQLite | PostgreSQL 只需这一条连接，同一账号负责读写、自动建表/升级及停机迁移；例如 `postgres://relay_app:密码@postgres:5432/relay?sslmode=disable`；密码特殊字符需 URL 编码，远程连接按部署配置 TLS |
 | `RELAY_LOG_LEVEL` | `info` | `debug`、`info`、`warn`、`error` |
-| `RELAY_PUBLIC_URL` | 空，允许按请求 Host/协议验证来源 | 固定反代 origin，例如 `https://relay.example.com`，不含路径/查询/账号；局域网直连无需设置 |
+| `RELAY_PUBLIC_URL` | 空，允许按请求 Host/协议验证来源 | 固定且唯一的浏览器登录 origin，例如 `https://relay.example.com`，不含路径/查询/账号。配置后请始终通过该地址登录；HTTP 局域网直连会被拒绝，不能同时作为第二登录入口。只用局域网 HTTP 时省略此项 |
 | `RELAY_SECURE_COOKIES` | 随 public URL 是否 HTTPS，未固定 URL 默认 `false` | `"true"` / `"false"`；固定 URL 时必须与协议一致 |
 | `RELAY_LISTEN_ADDR` | `:8787` | 容器内监听地址；修改端口时同步修改 ports 右侧 |
 | `RELAY_ENCRYPTION_KEY` | 首装随机生成并保存为 `/data/encryption.key` | 仅导入原实例密钥时提供64位十六进制；不能通过改变量轮换，遗失后不能重建替代 |
@@ -85,7 +85,7 @@ volumes:
   relay-data:
 ```
 
-以上 HTTPS 域名仅是反代示例，HTTP 直连时省略。主文件端口请直接修改，多文件合并可能保留旧端口。
+以上 HTTPS 域名仅是反代示例；使用此配置后须打开该 HTTPS 地址，不能再按默认步骤通过 `http://NAS地址:8787` 登录。只使用 HTTP 局域网直连时省略 `RELAY_PUBLIC_URL`，不要通过关闭安全 Cookie 来绕过固定入口。主文件端口请直接修改，多文件合并可能保留旧端口。
 
 默认 root 运行方式需要重新构建并发布镜像。旧镜像可在 relay 服务下添加 `user: "0:0"` 并重新创建容器，保留原数据挂载即可，无需修改应用参数。只读挂载、NAS ACL 或 root-squash 仍可能限制访问；应用保留数据目录 0700 和私密文件权限约束。
 

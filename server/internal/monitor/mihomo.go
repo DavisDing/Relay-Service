@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -19,6 +20,9 @@ const mihomoHistoryMaxAge = 15 * time.Minute
 type MihomoDetails struct {
 	Subscriptions           []MihomoSubscription `json:"subscriptions"`
 	Nodes                   []MihomoNode         `json:"nodes"`
+	ProviderCount           int                  `json:"provider_count"`
+	EmbeddedProviderCount   int                  `json:"embedded_provider_count"`
+	SubscriptionState       string               `json:"subscription_state"`
 	SubscriptionCount       int                  `json:"subscription_count"`
 	NodeCount               int                  `json:"node_count"`
 	HealthyNodes            int                  `json:"healthy_nodes"`
@@ -81,10 +85,32 @@ type mihomoRawProvider struct {
 	Proxies     []mihomoRawProxy       `json:"proxies"`
 }
 
-// Compatible/Inline providers are built-in groups or embedded nodes, not
-// external subscription sources. Do not classify them by display name.
+// Explicit quota metadata can identify a subscription even when a compatible
+// implementation labels every provider Compatible. Group memberships alone
+// cannot identify an airport or reconstruct its quota.
 func mihomoSubscriptionProvider(p mihomoRawProvider) bool {
-	return !strings.EqualFold(p.VehicleType, "Compatible") && !strings.EqualFold(p.VehicleType, "Inline")
+	if p.Info != nil && (p.Info.Total != nil && *p.Info.Total > 0 || p.Info.Expire != nil && *p.Info.Expire > 0) {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(p.VehicleType)) {
+	case "compatible", "inline":
+		return false
+	default:
+		return true // Older providers omit vehicleType; keep their existing projection.
+	}
+}
+
+// Airports sometimes insert quota/expiry labels as connectable proxy rows.
+// Require both a known label and a structured value; ordinary node names that
+// merely mention traffic or expiry must survive.
+var mihomoInformationalRow = regexp.MustCompile(`(?i)^(?:剩余流量|可用流量|套餐流量|本月剩余|traffic remaining|remaining traffic)\s*[:：]\s*[0-9]+(?:\.[0-9]+)?\s*(?:[kmgtp]i?b|[kmgtp])(?:\s*.*)?$|^(?:套餐到期|到期时间|订阅到期|expire|expiry|expiration)\s*[:：]\s*(?:长期有效|永久|不限期|无期限|never|unlimited|[0-9]{4}[-/.年][0-9]{1,2}[-/.月][0-9]{1,2}日?)(?:\s*.*)?$`)
+
+func mihomoInformationalName(name string) bool {
+	// Trim decorative prefixes without matching arbitrary leading words.
+	name = strings.TrimLeftFunc(name, func(r rune) bool {
+		return r == ' ' || r > 0xffff || r == '⏳' || r == '⌛' || r == '♾' || r == '\ufe0f'
+	})
+	return mihomoInformationalRow.MatchString(strings.TrimSpace(name))
 }
 
 func mihomoInvalid() error {
@@ -181,7 +207,7 @@ func parseMihomoProviders(body []byte, now time.Time) (*MihomoDetails, map[strin
 	if json.Unmarshal(body, &response) != nil || response.Providers == nil {
 		return nil, nil, nil, mihomoInvalid()
 	}
-	d := &MihomoDetails{Subscriptions: []MihomoSubscription{}, Nodes: []MihomoNode{}, ProxySourceState: "not_collected"}
+	d := &MihomoDetails{ProviderCount: len(response.Providers), SubscriptionState: "available", Subscriptions: []MihomoSubscription{}, Nodes: []MihomoNode{}, ProxySourceState: "not_collected"}
 	seen, names := map[string]bool{}, map[string]bool{}
 	for _, name := range mihomoSortedKeys(response.Providers) {
 		if !safeName(name) {
@@ -189,6 +215,7 @@ func parseMihomoProviders(body []byte, now time.Time) (*MihomoDetails, map[strin
 		}
 		provider := response.Providers[name]
 		if !mihomoSubscriptionProvider(provider) {
+			d.EmbeddedProviderCount++
 			continue
 		}
 		d.SubscriptionCount++
@@ -216,6 +243,9 @@ func parseMihomoProviders(body []byte, now time.Time) (*MihomoDetails, map[strin
 			seen[key], names[p.Name] = true, true
 			addMihomoNode(d, mihomoProjectNode(p, name, now))
 		}
+	}
+	if d.SubscriptionCount == 0 && d.EmbeddedProviderCount > 0 {
+		d.SubscriptionState = "not_exposed"
 	}
 	d.Truncated = d.SubscriptionCount > mihomoDetailLimit || d.NodeCount > mihomoDetailLimit
 	return d, seen, names, nil
@@ -271,6 +301,9 @@ func mihomoProjectSubscription(name string, p mihomoRawProvider, now time.Time) 
 }
 
 func mihomoNonNode(p mihomoRawProxy) bool {
+	if mihomoInformationalName(p.Name) {
+		return true
+	}
 	if len(p.All) > 0 && string(p.All) != "null" {
 		return true
 	}

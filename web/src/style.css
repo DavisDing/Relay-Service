@@ -331,9 +331,19 @@ input::placeholder {
   margin-bottom: 22px;
 }
 
-.login form>button {
+.login form>button,.login form>fieldset>button {
   width: 100%;
   margin-top: 8px;
+}
+
+.login .login-entry {
+  display: block;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+
+.login-entry a {
+  color: var(--accent);
 }
 
 .login small {

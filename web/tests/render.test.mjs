@@ -395,3 +395,13 @@ test('cockpit partial failures retain only their own cache and reject old config
   assert.equal(changed.networks.a.data, undefined);
   await assert.rejects(readCockpit(services, true, async () => { throw new CockpitAPIError('expired', 401); }), reason => reason.status === 401);
 });
+
+test('every navigation child has a stable deep link and round trips', () => {
+ const { modelPages, networkPages, pagePath, pageFromPath } = load('NavigationRoutes.tsx');
+ const keys = ['home', 'services', 'alerts', 'devices', 'settings', 'diagnostic', 'logs', 'logs-services', 'logs-models', 'logs-network', ...modelPages.map(x => x.key), ...networkPages.map(x => x.key)];
+ const paths = keys.map(pagePath);
+ assert.equal(new Set(paths).size, keys.length);
+ for (const key of keys) { assert.equal(pageFromPath(pagePath(key)), key); assert.equal(pageFromPath(pagePath(key) + (key === 'home' ? '' : '/')), key); }
+ assert.equal(pagePath('logs-models'), '/logs/models');
+ assert.equal(pageFromPath('/network/nodes'), 'network-nodes');
+});
