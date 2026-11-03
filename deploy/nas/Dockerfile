@@ -10,6 +10,8 @@ RUN npm install --global pnpm@11.25.0
 COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY web/ ./
+# The build checks page routes against the backend's SPA path inventory.
+COPY server/internal/webui/webui.go /src/server/internal/webui/webui.go
 RUN pnpm build
 
 FROM --platform=$BUILDPLATFORM golang:${GO_VERSION} AS build

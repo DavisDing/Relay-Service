@@ -87,14 +87,18 @@ func TestLogStreamRenewalAndTransientDisconnectAreNotSustainedFailure(t *testing
 		t.Fatal("transient failure raised sustained outage")
 	}
 	w.networkCollectorState("logs", "disconnected", now.Add(17*time.Second))
+	if w.logState != "reconnecting" {
+		t.Fatal("failure lasting less than 15 seconds raised sustained outage")
+	}
+	w.networkCollectorState("logs", "disconnected", now.Add(18*time.Second))
 	if w.logState != "disconnected" {
 		t.Fatal("sustained failure hidden")
 	}
-	w.networkCollectorState("logs", "unauthorized", now.Add(18*time.Second))
+	w.networkCollectorState("logs", "unauthorized", now.Add(19*time.Second))
 	if w.logState != "unauthorized" {
 		t.Fatal("authentication failure delayed")
 	}
-	if err := w.applyStream("logs", []byte(`{"type":"info","payload":"connected"}`), now.Add(19*time.Second)); err != nil {
+	if err := w.applyStream("logs", []byte(`{"type":"info","payload":"connected"}`), now.Add(20*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	if !w.logDisconnectedAt.IsZero() || w.logState != "available" {
