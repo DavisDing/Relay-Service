@@ -33,16 +33,17 @@ func TestPostgresCountUsesIndexedTimeOnlyForMatchingRecords(t *testing.T) {
 			for _, condition := range []string{
 				test.expression + " IS NOT NULL",
 				test.expression + " <> TIMESTAMPTZ '0001-01-01 00:00:00+00'",
-				test.expression + " < $3",
-				"left(record_key, length($2))=$2",
-				"COALESCE(value->>'status','') <> $4",
+				test.expression + " < $4",
+				"record_key COLLATE \"C\" >= $2",
+				"record_key COLLATE \"C\" < $3",
 				"COALESCE(value->>'status','') <> $5",
+				"COALESCE(value->>'status','') <> $6",
 			} {
 				if !strings.Contains(db.query, condition) {
 					t.Errorf("missing condition %q in %s", condition, db.query)
 				}
 			}
-			if want := []any{test.bucket, "svc/", cutoff, "queued", "running"}; !reflect.DeepEqual(db.args, want) {
+			if want := []any{test.bucket, "svc/", "svc0", cutoff, "queued", "running"}; !reflect.DeepEqual(db.args, want) {
 				t.Fatalf("query arguments=%v; want %v", db.args, want)
 			}
 		})

@@ -99,6 +99,11 @@ func TestSQLitePrefixRangeContractsAndPlan(t *testing.T) {
 }
 func TestPostgresPrefixRangeContracts(t *testing.T) {
 	s, _ := postgresIntegrationStores(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
 	exercisePrefixRange(t, s)
 }
 func TestRecordPrefixEnd(t *testing.T) {

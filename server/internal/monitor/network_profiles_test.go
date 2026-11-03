@@ -224,6 +224,13 @@ func TestNetworkProfilesMissingTokenAndDetailAuth(t *testing.T) {
 	f.detailStatus = http.StatusForbidden
 	f.metas = []networkProfileMeta{{ID: "a", Name: "订阅", Type: "remote"}}
 	f.mu.Unlock()
+	// Authentication failures retain the five-minute cooldown even if the
+	// upstream recovers; no list or detail request should bypass it.
+	e.pollNetworkProfiles(context.Background(), w)
+	if f.listReads != 1 || len(f.reads) != 0 || w.view.Coverage.SourceStates["profiles"] != "unauthorized" {
+		t.Fatal("authentication retry bypassed cooldown")
+	}
+	now = now.Add(5 * time.Minute)
 	e.pollNetworkProfiles(context.Background(), w)
 	if w.view.Coverage.SourceStates["profiles"] != "available" || w.view.Coverage.SourceStates["profile_nodes"] != "unauthorized" || w.profileSubs[0].NodeCountKnown {
 		t.Fatal("detail authentication failure masked available metadata or invented an empty catalog")
