@@ -199,6 +199,7 @@ func TestNetworkProfilesAuthFailureAndRecoveryPreservesCatalog(t *testing.T) {
 			f.mu.Lock()
 			f.status = 0
 			f.mu.Unlock()
+			now = now.Add(5 * time.Minute) // authentication retry cooldown
 			e.pollNetworkProfiles(context.Background(), w)
 			if w.view.Coverage.SourceStates["profiles"] != "available" || strings.Contains(strings.Join(w.view.Coverage.Notes, " "), "拒绝") {
 				t.Fatal("auth failure state/diagnostic survived recovery")

@@ -30,9 +30,16 @@ func (e *Engine) pollNetworkProfiles(ctx context.Context, w *networkWorker) {
 		w.mu.Unlock()
 		return
 	}
+	w.mu.RLock()
+	coolingDown := e.now().Before(w.profilesRetryAt)
+	w.mu.RUnlock()
+	if coolingDown || ctx.Err() != nil {
+		return
+	}
 	client, origin, token, closeClient, err := e.networkClient(ctx, w, true)
 	if err != nil {
 		w.mu.Lock()
+		w.profileRetryFailure(e.now(), true)
 		w.view.Coverage.SourceStates["profiles"] = "credential_invalid"
 		w.profileCollectionNote("配置文件订阅采集：", "控制服务地址或已保存的凭据无法读取；请核对地址并重新保存独立的控制令牌。")
 		w.rebuildNetworkInventory(e.now())
@@ -49,8 +56,12 @@ func (e *Engine) pollNetworkProfiles(ctx context.Context, w *networkWorker) {
 		err = networkJSON(timeout, client, origin, token, "/api/control/profiles", &metas)
 		cancel()
 		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
 			w.mu.Lock()
 			state, note := networkProfileFailure(err, token)
+			w.profileRetryFailure(e.now(), state == "unauthorized")
 			w.view.Coverage.SourceStates["profiles"] = state
 			w.view.Coverage.Notes = networkNote(w.view.Coverage.Notes, "当前激活配置通过完整节点目录核对后关联核心检测；未激活或归属待确认的目录不继承检测记录。")
 			w.rebuildNetworkInventory(e.now())
@@ -141,6 +152,7 @@ func (e *Engine) pollNetworkProfiles(ctx context.Context, w *networkWorker) {
 		}
 		w.profileQueue = queue
 		w.profileCursor = 0
+		w.profilesRetryAt, w.profilesBackoff = time.Time{}, 0
 		w.profilesFetched = e.now()
 		w.profilesCoreStamp = w.coreCatalogStamp
 		w.view.Coverage.SourceStates["profiles"] = "available"
@@ -368,4 +380,17 @@ func parseNetworkProfileNodes(content, subscription, token string) ([]NetworkNod
 		}
 	}
 	return out, nil
+}
+
+// Callers hold w.mu. Keep failed attempts separate from the last successful
+// catalog time: stale bindings must not become current just to throttle retries.
+func (w *networkWorker) profileRetryFailure(now time.Time, authentication bool) {
+	if authentication {
+		w.profilesBackoff = 5 * time.Minute
+	} else if w.profilesBackoff == 0 {
+		w.profilesBackoff = 10 * time.Second
+	} else {
+		w.profilesBackoff = min(w.profilesBackoff*2, 5*time.Minute)
+	}
+	w.profilesRetryAt = now.Add(w.profilesBackoff)
 }

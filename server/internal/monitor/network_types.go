@@ -13,7 +13,7 @@ const networkNodeBucket = "network.nodes"
 const networkLogsBucket = "network.logs"
 const networkExpiryBucket = "network.expiry"
 const networkItemLimit = 5000
-const networkNodeIdentityVersion = 4
+const networkNodeIdentityVersion = 5
 
 type NetworkQuery struct {
 	Section, Cursor, Q, Subscription, State, Node string
@@ -198,6 +198,8 @@ type networkRuntime struct {
 	workers map[string]*networkWorker
 }
 type networkWorker struct {
+	flushMu           sync.Mutex
+	flushRetry        *networkFlushBatch
 	historyGeneration int64
 	sensitive         []string
 	sourceUpdated     map[string]time.Time
@@ -225,6 +227,8 @@ type networkWorker struct {
 	coreNodes         []NetworkNode
 	profileSubs       []NetworkSubscription
 	profileNodes      []NetworkNode
+	profilesRetryAt   time.Time
+	profilesBackoff   time.Duration
 	profilesFetched   time.Time
 	profileQueue      []string
 	profileCursor     int

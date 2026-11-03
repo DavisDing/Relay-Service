@@ -133,7 +133,7 @@ func (e *Engine) execute(ctx context.Context, rec serviceRecord) observation {
 		}
 		result = positive("subscription_metadata", "已读取订阅额度和已有节点质量记录；未执行主动测速。")
 		if d.SubscriptionState == "not_exposed" {
-			result.message = "核心接口可达；仅返回组或内联视图，机场订阅及额度未知；已有节点质量独立展示，未主动测速。"
+			result.message = "核心接口可达；未返回可识别的机场订阅，订阅数量及额度未知；已有节点质量独立展示，未主动测速。"
 		}
 		result.details = &Details{Source: "/providers/proxies", Mihomo: d, Count: d.SubscriptionCount, Truncated: d.Truncated}
 		for _, sub := range d.Subscriptions {

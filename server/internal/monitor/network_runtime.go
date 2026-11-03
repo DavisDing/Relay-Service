@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -276,28 +277,74 @@ func networkError(err error) string {
 	}
 	return "网络代理数据暂不可用。"
 }
+
+// A batch owns detached pending data until commit. A failed batch is retried
+// unchanged, while collectors continue filling a fresh bounded pending buffer.
+type networkFlushBatch struct {
+	worker   *networkWorker
+	usage    NetworkUsage
+	nodes    map[string]NetworkNodeSample
+	logs     []NetworkLog
+	snapshot NetworkView
+}
+
 func (e *Engine) flushNetwork(ctx context.Context, w *networkWorker, force bool) error {
-	w.mu.Lock()
-	now := e.now()
-	minute := now.Truncate(time.Minute)
-	if w.lastMinute.IsZero() {
-		w.lastMinute = minute
-	}
-	if !force && minute.Equal(w.lastMinute) {
+	w.flushMu.Lock()
+	defer w.flushMu.Unlock()
+	for {
+		retrying := w.flushRetry != nil
+		if !retrying {
+			w.mu.Lock()
+			now := e.now()
+			minute := now.Truncate(time.Minute)
+			if w.lastMinute.IsZero() {
+				w.lastMinute = minute
+			}
+			if !force && minute.Equal(w.lastMinute) {
+				w.mu.Unlock()
+				return nil
+			}
+			base := w.view
+			base.Connections, base.Logs = nil, nil
+			base.Settings = NetworkSettings{}
+			// Flattened view.Nodes is authoritative; do not persist the same
+			// directory a second time inside every subscription.
+			base.Subscriptions = slices.Clone(base.Subscriptions)
+			for i := range base.Subscriptions {
+				base.Subscriptions[i].Nodes = nil
+			}
+			snapshot := networkCopyView(base)
+			snapshot.SettingsRevision = w.revision
+			usage := w.pendingUsage
+			usage.At = w.lastMinute
+			w.flushRetry = &networkFlushBatch{worker: &networkWorker{rec: w.rec, revision: w.revision, historyGeneration: w.historyGeneration, pendingBreakdown: w.pendingBreakdown}, usage: usage, nodes: w.pendingNodes, logs: w.pendingLogs, snapshot: snapshot}
+			w.lastMinute = minute
+			w.pendingUsage = NetworkUsage{}
+			w.pendingNodes = map[string]NetworkNodeSample{}
+			w.pendingLogs, w.pendingBreakdown = nil, nil
+			w.mu.Unlock()
+		}
+		// JSON encoding, record readback, retention scans and the entire
+		// transaction run without w.mu, including slow/failing databases.
+		if err := e.writeNetworkBatch(ctx, w.flushRetry); err != nil {
+			return err
+		}
+		w.flushRetry = nil
+		w.mu.Lock()
+		if w.view.Coverage.SourceStates["storage"] == "unavailable" {
+			w.networkCollectorState("storage", "available", e.now())
+		}
 		w.mu.Unlock()
-		return nil
+		if !force || !retrying {
+			return nil
+		}
+		// At shutdown, also flush samples collected while the retry was pending.
 	}
-	usage := w.pendingUsage
-	usage.At = w.lastMinute
-	nodes := w.pendingNodes
-	logs := append([]NetworkLog{}, w.pendingLogs...)
-	snapshot := networkCopyView(w.view)
-	snapshot.SettingsRevision = w.revision
-	snapshot.Connections = []NetworkConnection{}
-	snapshot.Logs = []NetworkLog{}
-	snapshot.Settings = NetworkSettings{}
-	snapshot.Settings.ImportedSubscriptions = nil
-	err := e.store.Update(ctx, func(tx storage.Tx) error {
+}
+
+func (e *Engine) writeNetworkBatch(ctx context.Context, batch *networkFlushBatch) error {
+	w, usage, nodes, logs, snapshot := batch.worker, batch.usage, batch.nodes, batch.logs, batch.snapshot
+	return e.store.Update(ctx, func(tx storage.Tx) error {
 		rec, err := networkRecord(tx, w.rec.Service.ID)
 		if err != nil {
 			return err
@@ -420,18 +467,6 @@ func (e *Engine) flushNetwork(ctx context.Context, w *networkWorker, force bool)
 		}
 		return w.flushNetworkBreakdown(tx, rec.Service.ID, w.historyGeneration)
 	})
-	if err == nil {
-		w.lastMinute = minute
-		w.pendingUsage = NetworkUsage{}
-		w.pendingNodes = map[string]NetworkNodeSample{}
-		w.pendingLogs = nil
-		w.pendingBreakdown = nil
-		if w.view.Coverage.SourceStates["storage"] == "unavailable" {
-			w.networkCollectorState("storage", "available", now)
-		}
-	}
-	w.mu.Unlock()
-	return err
 }
 func (w *networkWorker) applyConnections(body []byte, token string, now time.Time) error {
 	var input struct {

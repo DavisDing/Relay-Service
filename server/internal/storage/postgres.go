@@ -351,9 +351,14 @@ func (t *postgresTx) Scan(bucket string, options Scan) ([]Record, error) {
 		query += " AND record_key IN (" + strings.Join(placeholders, ",") + ")"
 	}
 	if options.Prefix != "" {
-		query += fmt.Sprintf(" AND left(record_key, length($%d))=$%d", n, n)
+		query += fmt.Sprintf(" AND record_key COLLATE \"C\" >= $%d", n)
 		args = append(args, options.Prefix)
 		n++
+		if end, ok := recordPrefixEnd(options.Prefix); ok {
+			query += fmt.Sprintf(" AND record_key COLLATE \"C\" < $%d", n)
+			args = append(args, end)
+			n++
+		}
 	}
 	if options.After != "" {
 		query += fmt.Sprintf(" AND record_key COLLATE \"C\" %s $%d", comparison, n)
@@ -392,9 +397,14 @@ func (t *postgresTx) Count(bucket string, options CountOptions) (int64, error) {
 	args := []any{bucket}
 	n := 2
 	if options.Prefix != "" {
-		query += fmt.Sprintf(" AND left(record_key, length($%d))=$%d", n, n)
+		query += fmt.Sprintf(" AND record_key COLLATE \"C\" >= $%d", n)
 		args = append(args, options.Prefix)
 		n++
+		if end, ok := recordPrefixEnd(options.Prefix); ok {
+			query += fmt.Sprintf(" AND record_key COLLATE \"C\" < $%d", n)
+			args = append(args, end)
+			n++
+		}
 	}
 	// Keep the SQL predicate aligned with Go's time.Time.IsZero semantics.
 	// time.Time{} is serialized as 0001-01-01T00:00:00Z, so IS NOT NULL alone

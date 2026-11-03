@@ -65,6 +65,10 @@ SQLite 使用 modernc.org/sqlite v1.61.0（BSD-3-Clause，纯Go），复用 Stor
 
 容器权限更新（2026-10-28，D-18/19）：按用户最终确认，使用 scratch 镜像，显式 USER 0:0，ENTRYPOINT 为 `/relay`，Relay 直接作为 PID 1 运行。此决定替代此前 root 初始化后降权方案；不引入独立启动器、UID/GID 环境参数、递归 chown 或额外守护进程。应用原有数据目录 0700、秘密文件权限和锁保护保持。Compose user 可覆盖身份，但需自行准备可读写数据目录；只读挂载、NAS ACL、root-squash 仍可能拒绝访问。默认 Compose 用 container_name 固定 relay-service；新镜像发布和 NAS 实机验证分别核实。
 
+## 采集审计修订（2026-11-03）
+
+本轮修正流重试、计划换连噪声与空行断流，profiles失败增加独立冷却；订阅未知、缺类型分组与异常delay按来源证据统一处理。快照读写去除锁内JSON往返，失败事务用独立有界批次重试；SQL前缀范围复用既有二进制/C排序索引。Web构建校验路由集合，分布条使用CSP允许的SVG属性；服务列表保持完整数组并拒绝未支持参数。详细合同和验收边界见contracts/IMPLEMENTATION.md与nas/DS-AUDIT-HANDOFF-2026-11-03.md。
+
 ## 审计修订的当前实现（2026-10-31）
 
 当前导航采用显式路径与浏览器History API，不新增路由依赖；全部已存在页面和子页支持直达、刷新与前进后退。后端只给已知页面回退SPA，未知API/健康/静态资源保持404。此实现覆盖下文历史“路由仍待实现”描述，未来新增复杂嵌套路由时再评估React Router，当前不为页面映射引入依赖。

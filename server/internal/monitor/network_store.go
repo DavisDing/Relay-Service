@@ -214,12 +214,6 @@ func (e *Engine) ImportNetworkSubscriptions(ctx context.Context, id string, in N
 func networkLabel(value string) bool {
 	return safeName(value) && !strings.Contains(value, "://") && !strings.ContainsAny(value, "\x00\r\n")
 }
-func networkCopyView(v NetworkView) NetworkView {
-	b, _ := json.Marshal(v)
-	var c NetworkView
-	_ = json.Unmarshal(b, &c)
-	return c
-}
 func emptyNetworkView(id string, generation int64) NetworkView {
 	return NetworkView{NodeIdentityVersion: networkNodeIdentityVersion, ServiceID: id, Generation: generation, State: "waiting", Message: "等待后台采集。", Settings: networkDefaults(generation), Subscriptions: []NetworkSubscription{}, Nodes: []NetworkNode{}, Connections: []NetworkConnection{}, Logs: []NetworkLog{}, Usage: []NetworkUsage{}, NodeHistory: []NetworkNodeSample{}, Coverage: NetworkCoverage{SubscriptionSources: &NetworkSubscriptionSources{CoreState: "waiting", State: "unavailable", Message: "等待订阅来源采集；当前机场订阅数量与额度未知。"}, SourceStates: map[string]string{}, Notes: []string{"节点结果来自已有检测；未加载的订阅节点没有当前检测证据。", "首次接入前的历史及采集中断均不补造。"}}}
 }
@@ -334,6 +328,15 @@ func (e *Engine) NetworkView(ctx context.Context, id string, q NetworkQuery) (Ne
 						}
 					}
 					out.Coverage.SubscriptionSources = &NetworkSubscriptionSources{CoreState: "waiting", State: "unavailable", ControlState: "waiting", ControlSubscriptions: len(out.Subscriptions), Message: "订阅来源等待重新采集；保留的控制层配置清单与额度不是当前证据，机场订阅数量未知。"}
+					if out.Coverage.SourceStates == nil {
+						out.Coverage.SourceStates = map[string]string{}
+					}
+					for source := range out.Coverage.SourceStates {
+						out.Coverage.SourceStates[source] = "waiting"
+					}
+					out.Coverage.SourceStates["profiles"] = "waiting"
+					out.Coverage.SourceStates["providers"] = "waiting"
+					out.Coverage.SourceStates["nodes"] = "waiting"
 					out.Coverage.Notes = append(out.Coverage.Notes, "节点与订阅快照需重新采集；已有历史按原身份保留至到期。")
 				}
 				out.Settings = saved.Settings

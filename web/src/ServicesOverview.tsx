@@ -1,3 +1,4 @@
+import { StatusDistribution } from './StatusDistribution';
 import { CheckDetails } from './CheckDetails';
 import { useState } from 'react';
 import type { Alert, Service } from './types';
@@ -67,10 +68,7 @@ const segments = [
 
 function Distribution({ services }: { services: Service[] }) {
   const counts = summarizeServices(services);
-  return <div className="health-distribution" aria-hidden="true">
-    {segments.map(([key]) => counts[key] > 0 && <span key={key} className={'health-segment ' + key}
-      style={{ flex: counts[key] }} />)}
-  </div>;
+  return <StatusDistribution className="health-distribution" counts={counts} />;
 }
 
 function attentionReason(service: Service) {

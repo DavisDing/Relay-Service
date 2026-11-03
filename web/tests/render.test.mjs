@@ -405,3 +405,19 @@ test('every navigation child has a stable deep link and round trips', () => {
  assert.equal(pagePath('logs-models'), '/logs/models');
  assert.equal(pageFromPath('/network/nodes'), 'network-nodes');
 });
+
+
+test('strict CSP status bars use proportional SVG geometry without style attributes', () => {
+ const { StatusDistribution } = load('StatusDistribution.tsx');
+ const html = renderToStaticMarkup(React.createElement(StatusDistribution, { counts: {healthy: 4, failed: 1}, className: 'fixture', label: '状态' }));
+ assert.match(html, /viewBox="0 0 5 1"/);
+ assert.match(html, /x="0" y="0" width="4"/);
+ assert.match(html, /x="4" y="0" width="1"/);
+ assert.doesNotMatch(html, /style=/);
+});
+test('unknown subscription counts use one label across views', () => {
+ const { subscriptionCountLabel } = load('SubscriptionEvidence.tsx');
+ for (const state of [undefined, 'waiting', 'unavailable', 'partial', 'not_exposed']) assert.equal(subscriptionCountLabel(0, state, ' 项'), '未知');
+ assert.equal(subscriptionCountLabel(0, 'available', ' 项'), '0 项');
+ assert.equal(subscriptionCountLabel(2, 'available', ' 项'), '2 项');
+});

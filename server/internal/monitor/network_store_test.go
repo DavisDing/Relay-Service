@@ -100,13 +100,15 @@ func TestNetworkViewMembershipPaginationAndOldSnapshotInvalidation(t *testing.T)
 			return err
 		}
 		snapshot.NodeIdentityVersion = 0
+		snapshot.Coverage.SourceStates["profiles"] = "available"
+		snapshot.Coverage.SourceStates["providers"] = "available"
 		return tx.Put(networkSnapshotBucket, w.rec.Service.ID, snapshot)
 	}); err != nil {
 		t.Fatal(err)
 	}
 	e.network = nil
 	v, err = e.NetworkView(context.Background(), w.rec.Service.ID, NetworkQuery{Section: "nodes"})
-	if err != nil || len(v.Nodes) != 0 || v.Overview.NodeCount != 0 || v.State != "stale" {
+	if err != nil || len(v.Nodes) != 0 || v.Overview.NodeCount != 0 || v.State != "stale" || v.Coverage.SourceStates["profiles"] != "waiting" || v.Coverage.SourceStates["providers"] != "waiting" {
 		t.Fatalf("legacy duplicate snapshot surfaced: %+v %v", v, err)
 	}
 }

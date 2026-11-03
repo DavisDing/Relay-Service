@@ -139,3 +139,15 @@ Web新增同级“大模型”入口及六页签；服务监控仅保留摘要�
 页面路径由`NavigationRoutes.tsx`显式映射：首页`/`、服务`/services`、告警`/alerts`、设备`/devices`、设置`/settings`、诊断`/diagnostic`，模型`/models`及`/models/{models,channels,traffic,status,probes}`，网络`/network`及`/network/{usage,subscriptions,nodes,connections,logs}`，日志`/logs`及`/logs/{services,models,network}`。History API负责导航和popstate恢复，登录失效不清除当前页面路径；实例/筛选不写入URL。后端已知页面GET/HEAD回退嵌入入口且no-store，未知路径/API/资源不回退，非读取方法405。无新增依赖。
 
 核心日志流的65秒计划换连为connecting，短暂异常为reconnecting；失败持续至少15秒后在后续重试显示disconnected，unauthorized不延迟。有效日志帧重置失败窗口，连续连接至少15秒也视为恢复；HTTP响应头本身不清除连续失败起点，避免快速EOF掩盖故障。取消采集不制造断流事件。
+
+### 采集与性能审计修订（2026-11-03）
+
+此节覆盖2026-10-31相关细节：核心provider为空、全部不可识别，或not_exposed且控制清单为空时，订阅数量仍未知。HTTP/File可识别，其他类型需要正数总额/到期；缺类型的旧版本只有核心/proxies成功且排除同名组时才能兼容识别，两处共用判断。异常delay局部解析为单节点未知，不沿用旧绿色、不清空目录。快照版本5让旧来源全部等待重采，历史不删除。前端三处共用订阅数量判定，空订阅分页也显示数量未知。
+
+NDJSON空白行跳过，扫描错误/无效记录/EOF/context取消分别处理。响应头和短连接不重置失败退避；连续连接至少15秒后恢复1秒，否则1/2/4/8/16/30秒。静默日志连接15秒可报告已连接，有效帧即时可读。三类65秒计划换连均为connecting且不产生collector日志，正常续连不写恢复事件；真实故障与恢复仍保留。无上游事件ID时不按正文猜测去重，以免吞掉相同的真实事件；空行造成的重连/重放在读取层消除。
+
+profiles失败冷却独立保存，网络错误10秒倍增至5分钟，认证/无效凭据5分钟；成功重置。服务代际/设置修订创建新worker后可读新配置。失败不更新profilesFetched，核心变化不绕过冷却；详情维持原分批队列。
+
+快照类型化深复制保证指针/map/slice不共享。短锁内摘取批次后，编码、读回、清理和事务都在采集锁外执行；独立flush互斥保证顺序，失败批次保留原样，新采样进入新有界缓冲，成功才清批次。快照只保留一次扁平节点，订阅内Nodes省略。SQLite Scan/Count使用record_key>=prefix及可选的<nextPrefix，Unicode标量计算UTF-8上界，保留%/_/反斜线字面值、游标和逆序；PG用现有COLLATE C索引。SQLite畸形UTF-8输入保留旧处理，无有限上界时只用下界。无SQL结构迁移。
+
+Web构建执行scripts/check-routes.mjs比对导航与后端路径集合，漂移即失败。状态条用SVG坐标和宽度属性，不放宽CSP。GET /services仍返回完整数组，任何查询参数明确400 invalid_request，避免接受limit却返回全量。

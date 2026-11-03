@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -106,14 +107,23 @@ func networkJSON(ctx context.Context, client *http.Client, origin *url.URL, toke
 	}
 	return json.Unmarshal(body, out)
 }
+
+const networkStreamStableFor = 15 * time.Second
+
+// A 200 header or a single replayed frame followed by EOF is not a stable
+// stream. Such failures must retain exponential backoff.
+func networkStreamBackoff(previous time.Duration, stable bool) time.Duration {
+	if stable || previous == 0 {
+		return time.Second
+	}
+	return min(previous*2, 30*time.Second)
+}
+
 func (e *Engine) runNetworkStream(ctx context.Context, w *networkWorker, kind string) {
-	backoff := time.Second
-	for {
-		if ctx.Err() != nil {
-			return
-		}
+	backoff := time.Duration(0)
+	for ctx.Err() == nil {
 		failureState := "disconnected"
-		plannedRenewal := false
+		plannedRenewal, stable := false, false
 		client, origin, token, closeClient, err := e.networkClient(ctx, w, false)
 		if err == nil {
 			streamCtx, cancel := context.WithTimeout(ctx, 65*time.Second)
@@ -123,33 +133,34 @@ func (e *Engine) runNetworkStream(ctx context.Context, w *networkWorker, kind st
 				if errors.As(requestErr, &typed) && typed.Status == StatusUnauthorized {
 					failureState = "unauthorized"
 				}
-			}
-			if requestErr == nil {
+			} else {
+				connected := e.now()
+				// A quiet log stream is healthy after remaining connected; do not
+				// publish success or reset retry policy on response headers alone.
+				active := true // guarded by w.mu, including the timer callback
+				quiet := time.AfterFunc(networkStreamStableFor, func() {
+					w.mu.Lock()
+					defer w.mu.Unlock()
+					if active && streamCtx.Err() == nil && kind == "logs" {
+						w.logDisconnectedAt = time.Time{}
+						w.networkCollectorState(kind, "available", e.now())
+					}
+				})
 				w.mu.Lock()
 				if kind == "logs" {
-					backoff = time.Second
-					w.logConnectedAt = e.now()
-					w.networkCollectorState(kind, "available", e.now())
+					w.logConnectedAt = connected
 				}
 				w.mu.Unlock()
-				reader := bufio.NewScanner(resp.Body)
-				reader.Buffer(make([]byte, 4096), 64<<10)
-				frames := 0
-				for reader.Scan() {
-					if ctx.Err() != nil {
-						break
-					}
-					frames++
-					now := e.now()
-					if kind == "memory" && frames == 1 {
-						continue
-					}
-					if err := w.applyStream(kind, reader.Bytes(), now); err != nil {
-						break
-					}
-					backoff = time.Second
+				_, readErr := w.readNetworkStream(streamCtx, kind, resp.Body, e.now)
+				w.mu.Lock()
+				active = false
+				w.mu.Unlock()
+				quiet.Stop()
+				stable = e.now().Sub(connected) >= networkStreamStableFor
+				plannedRenewal = errors.Is(streamCtx.Err(), context.DeadlineExceeded) && errors.Is(readErr, context.DeadlineExceeded)
+				if errors.Is(readErr, ErrValidation) {
+					failureState = "invalid_response"
 				}
-				plannedRenewal = errors.Is(streamCtx.Err(), context.DeadlineExceeded)
 				resp.Body.Close()
 			}
 			cancel()
@@ -159,18 +170,17 @@ func (e *Engine) runNetworkStream(ctx context.Context, w *networkWorker, kind st
 			return
 		}
 		w.mu.Lock()
-		if kind == "logs" && plannedRenewal {
+		if plannedRenewal {
 			failureState = "renewing"
 		}
 		w.networkCollectorState(kind, failureState, e.now())
-		if kind != "logs" {
-			if kind == "traffic" {
-				w.view.Overview.UploadRate = 0
-				w.view.Overview.DownloadRate = 0
-				w.lastCounters = nil
-			}
+		if kind == "traffic" {
+			w.view.Overview.UploadRate = 0
+			w.view.Overview.DownloadRate = 0
+			w.lastCounters = nil
 		}
 		w.mu.Unlock()
+		backoff = networkStreamBackoff(backoff, stable)
 		timer := time.NewTimer(backoff)
 		select {
 		case <-ctx.Done():
@@ -178,10 +188,40 @@ func (e *Engine) runNetworkStream(ctx context.Context, w *networkWorker, kind st
 			return
 		case <-timer.C:
 		}
-		if backoff < 30*time.Second {
-			backoff *= 2
-		}
 	}
+}
+
+// NDJSON permits whitespace between records. Only nonempty records count as
+// frames; propagate scanner errors and cancellation rather than treating them
+// as a clean EOF. No raw upstream text is included in diagnostics.
+func (w *networkWorker) readNetworkStream(ctx context.Context, kind string, body io.Reader, now func() time.Time) (int, error) {
+	reader := bufio.NewScanner(body)
+	reader.Buffer(make([]byte, 4096), 64<<10)
+	frames, records := 0, 0
+	for reader.Scan() {
+		if err := ctx.Err(); err != nil {
+			return frames, err
+		}
+		line := bytes.TrimSpace(reader.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		records++
+		if kind == "memory" && records == 1 {
+			continue // mihomo's first memory record is its initialization sample
+		}
+		if err := w.applyStream(kind, line, now()); err != nil {
+			return frames, err
+		}
+		frames++
+	}
+	if err := ctx.Err(); err != nil {
+		return frames, err
+	}
+	if err := reader.Err(); err != nil {
+		return frames, err
+	}
+	return frames, io.EOF
 }
 func (w *networkWorker) applyStream(kind string, body []byte, now time.Time) error {
 	w.mu.Lock()
@@ -250,6 +290,9 @@ func (w *networkWorker) applyStream(kind string, body []byte, now time.Time) err
 		if raw == "" {
 			raw = frame.Message
 		}
+		if strings.TrimSpace(raw) == "" {
+			return ErrValidation
+		}
 		class := "core"
 		lower := strings.ToLower(raw)
 		switch {
@@ -262,8 +305,8 @@ func (w *networkWorker) applyStream(kind string, body []byte, now time.Time) err
 		case strings.Contains(lower, "error") || level == "error":
 			class = "error"
 		}
+		w.networkCollectorState(kind, "available", now)
 		w.appendNetworkLog(now, level, class, sanitizeNetworkLog(raw, w.sensitive))
-		w.logState = "available"
 		w.logDisconnectedAt = time.Time{}
 	}
 	if w.sourceUpdated == nil {
@@ -275,9 +318,17 @@ func (w *networkWorker) applyStream(kind string, body []byte, now time.Time) err
 
 // Callers hold w.mu; event text never includes upstream messages or addresses.
 func (w *networkWorker) networkCollectorState(source, state string, now time.Time) {
+	if state == "renewing" {
+		w.view.Coverage.SourceStates[source] = "connecting"
+		if source == "logs" {
+			w.logState = "connecting"
+			w.logConnectedAt = time.Time{}
+		}
+		return
+	}
 	if source == "logs" {
 		switch state {
-		case "disconnected", "renewing":
+		case "disconnected", "invalid_response":
 			if !w.logConnectedAt.IsZero() && now.Sub(w.logConnectedAt) >= 15*time.Second {
 				w.logDisconnectedAt = time.Time{}
 			}
@@ -286,11 +337,7 @@ func (w *networkWorker) networkCollectorState(source, state string, now time.Tim
 				w.logDisconnectedAt = now
 			}
 			if now.Sub(w.logDisconnectedAt) < 15*time.Second {
-				if state == "renewing" {
-					state = "connecting"
-				} else {
-					state = "reconnecting"
-				}
+				state = "reconnecting"
 			} else {
 				state = "disconnected"
 			}
@@ -305,7 +352,8 @@ func (w *networkWorker) networkCollectorState(source, state string, now time.Tim
 		w.logState = state
 	}
 	w.view.Coverage.SourceStates[source] = state
-	if previous == state || state == "reconnecting" || state == "connecting" {
+	if previous == state || state == "reconnecting" || state == "connecting" || previous == "connecting" && state == "available" ||
+		state == "available" && previous != "disconnected" && previous != "unauthorized" && previous != "invalid_response" {
 		return
 	}
 	name := map[string]string{"logs": "日志流", "traffic": "流量流", "memory": "内存流", "storage": "历史存储"}[source]
@@ -389,7 +437,7 @@ func (w *networkWorker) applyInventory(providerBody []byte, providerErr error, p
 					continue
 				}
 				p := input.Providers[name]
-				if !mihomoSubscriptionProvider(p) || p.VehicleType == "" && p.Info == nil && groupNames[name] {
+				if !mihomoSubscriptionProvider(p, proxyErr == nil, groupNames[name]) {
 					evidence.EmbeddedProviders++
 					continue
 				}
@@ -440,7 +488,7 @@ func (w *networkWorker) applyInventory(providerBody []byte, providerErr error, p
 		}
 	}
 	evidence.CoreSubscriptions = len(subs)
-	if len(subs) == 0 && evidence.EmbeddedProviders > 0 {
+	if providerErr == nil && len(subs) == 0 {
 		evidence.CoreState = "not_exposed"
 	}
 	w.view.Coverage.SubscriptionSources = evidence

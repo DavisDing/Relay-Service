@@ -266,10 +266,7 @@ func (t *sqliteTx) Scan(bucket string, o Scan) ([]Record, error) {
 			args = append(args, key)
 		}
 	}
-	if o.Prefix != "" {
-		query += " AND substr(record_key,1,length(?))=?"
-		args = append(args, o.Prefix, o.Prefix)
-	}
+	query, args = sqliteRecordPrefix(query, args, o.Prefix)
 	direction, comparison := "ASC", ">"
 	if o.Reverse {
 		direction, comparison = "DESC", "<"
@@ -306,10 +303,7 @@ func (t *sqliteTx) Count(bucket string, o CountOptions) (int64, error) {
 	}
 	query := "SELECT count(*) FROM relay_records WHERE bucket=?"
 	args := []any{bucket}
-	if o.Prefix != "" {
-		query += " AND substr(record_key,1,length(?))=?"
-		args = append(args, o.Prefix, o.Prefix)
-	}
+	query, args = sqliteRecordPrefix(query, args, o.Prefix)
 	if o.TimeField == retentionField(bucket) {
 		query += " AND retention_at IS NOT NULL AND retention_at < ?"
 		args = append(args, o.Before.UnixMicro())

@@ -130,7 +130,7 @@ func TestNetworkFlushRollsBackDataAndKeepsPendingOnExpiryFailure(t *testing.T) {
 	}
 	assertNetworkRows(t, store, networkUsageBucket, 0)
 	assertNetworkRows(t, store, networkSnapshotBucket, 0)
-	if w.pendingUsage.Samples != 1 || len(w.pendingNodes) != 1 || len(w.pendingLogs) != 1 || len(w.pendingBreakdown) != 1 {
+	if w.flushRetry == nil || w.flushRetry.usage.Samples != 1 || len(w.flushRetry.nodes) != 1 || len(w.flushRetry.logs) != 1 || len(w.flushRetry.worker.pendingBreakdown) != 1 {
 		t.Fatal("uncommitted pending evidence discarded")
 	}
 	store.fail = false

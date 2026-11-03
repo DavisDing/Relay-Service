@@ -46,7 +46,7 @@ func TestCompatibleProviderWithExplicitQuotaIsNotDiscarded(t *testing.T) {
 		t.Fatal("workspace discarded core quota evidence or replaced its provenance")
 	}
 	zero := int64(0)
-	if mihomoSubscriptionProvider(mihomoRawProvider{VehicleType: "Compatible", Info: &mihomoRawSubscription{Total: &zero, Expire: &zero}}) {
+	if mihomoSubscriptionProvider(mihomoRawProvider{VehicleType: "Compatible", Info: &mihomoRawSubscription{Total: &zero, Expire: &zero}}, false, false) {
 		t.Fatal("placeholder zero metadata fabricated an airport")
 	}
 }

@@ -1,0 +1,15 @@
+import { readFileSync } from 'node:fs';
+import ts from 'typescript';
+import assert from 'node:assert/strict';
+const source = readFileSync(new URL('../src/NavigationRoutes.tsx', import.meta.url), 'utf8');
+const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText;
+const mod = { exports: {} };
+new Function('exports', code)(mod.exports);
+const go = readFileSync(new URL('../../server/internal/webui/webui.go', import.meta.url), 'utf8');
+const block = go.match(/var applicationPaths = \[\]string\{([\s\S]*?)\}/)?.[1];
+assert.ok(block, 'missing backend route inventory');
+const backend = [...block.matchAll(/"([^"\n]+)"/g)].map(x => x[1]);
+const frontend = Object.values(mod.exports.pagePaths);
+assert.equal(new Set(frontend).size, frontend.length, 'duplicate frontend routes');
+assert.equal(new Set(backend).size, backend.length, 'duplicate backend routes');
+assert.deepEqual([...frontend].sort(), backend.sort(), 'frontend/backend page routes diverged');

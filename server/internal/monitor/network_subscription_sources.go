@@ -10,10 +10,15 @@ func (w *networkWorker) updateSubscriptionSources() {
 	}
 	evidence.ControlState = w.view.Coverage.SourceStates["profiles"]
 	evidence.ControlSubscriptions = len(w.profileSubs)
-	evidence.State = "available"
+	evidence.State = "unavailable"
+	// A readable control endpoint with an empty list does not establish an
+	// airport count when the core exposes only built-in provider views.
+	if evidence.CoreState == "available" && evidence.CoreSubscriptions > 0 || evidence.ControlState == "available" && evidence.ControlSubscriptions > 0 {
+		evidence.State = "available"
+	}
 	evidence.Message = fmt.Sprintf("核心 provider 识别 %d 项订阅；控制层配置 %d 项。两类来源独立，不将代理组当作机场。", evidence.CoreSubscriptions, evidence.ControlSubscriptions)
 	if evidence.CoreState == "not_exposed" {
-		evidence.Message = fmt.Sprintf("核心返回 %d 个 provider，其中 %d 个仅为组或内联视图，未提供可识别的机场订阅/额度；当前 %d 项配置订阅来自控制层。", evidence.ProviderEntries, evidence.EmbeddedProviders, evidence.ControlSubscriptions)
+		evidence.Message = fmt.Sprintf("核心返回 %d 个 provider，其中 %d 个为组、内联或类型未明的视图，未提供可识别的机场订阅/额度；当前 %d 项配置订阅来自控制层。", evidence.ProviderEntries, evidence.EmbeddedProviders, evidence.ControlSubscriptions)
 	}
 	if evidence.CoreState == "unavailable" || evidence.CoreState == "waiting" {
 		evidence.State = "partial"
@@ -27,16 +32,20 @@ func (w *networkWorker) updateSubscriptionSources() {
 		evidence.State = "partial"
 		evidence.Message += " 控制层当前不可读，尚无可保留的配置清单；控制层订阅数量未知。"
 	}
-	if evidence.CoreState == "not_exposed" && !controlReadable {
+	if evidence.CoreState == "not_exposed" && (!controlReadable || evidence.ControlSubscriptions == 0) {
 		evidence.State = "unavailable"
 		if len(w.profileSubs) == 0 {
-			evidence.Message += " 控制层未配置或读取失败，机场订阅数量与额度未知，不能解释为零订阅。"
+			if controlReadable {
+				evidence.Message += " 控制层未返回可识别的配置订阅，机场订阅数量与额度未知，不能解释为零订阅。"
+			} else {
+				evidence.Message += " 控制层未配置或读取失败，机场订阅数量与额度未知，不能解释为零订阅。"
+			}
 		}
 	}
-	if evidence.CoreState != "available" && !controlReadable && len(w.profileSubs) == 0 && len(w.settings.ImportedSubscriptions) == 0 {
+	if evidence.CoreState != "available" && (!controlReadable || evidence.ControlSubscriptions == 0) && len(w.profileSubs) == 0 && len(w.settings.ImportedSubscriptions) == 0 {
 		evidence.State = "unavailable"
 		if evidence.CoreState != "not_exposed" {
-			evidence.Message += " 控制层也不可读，不能解释为零订阅。"
+			evidence.Message += " 尚无可识别的订阅证据，不能解释为零订阅。"
 		}
 	}
 }

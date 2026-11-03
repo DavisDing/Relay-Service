@@ -66,8 +66,8 @@ type mihomoRawProxy struct {
 	Alive    *bool           `json:"alive"`
 	All      json.RawMessage `json:"all"`
 	History  []struct {
-		Time  time.Time `json:"time"`
-		Delay *uint16   `json:"delay"`
+		Time  time.Time       `json:"time"`
+		Delay json.RawMessage `json:"delay"`
 	} `json:"history"`
 }
 
@@ -86,17 +86,19 @@ type mihomoRawProvider struct {
 }
 
 // Explicit quota metadata can identify a subscription even when a compatible
-// implementation labels every provider Compatible. Group memberships alone
-// cannot identify an airport or reconstruct its quota.
-func mihomoSubscriptionProvider(p mihomoRawProvider) bool {
+// implementation labels every provider Compatible. Missing vehicleType only
+// uses the legacy fallback after a readable core inventory excludes that group.
+func mihomoSubscriptionProvider(p mihomoRawProvider, coreKnown, coreGroup bool) bool {
 	if p.Info != nil && (p.Info.Total != nil && *p.Info.Total > 0 || p.Info.Expire != nil && *p.Info.Expire > 0) {
 		return true
 	}
 	switch strings.ToLower(strings.TrimSpace(p.VehicleType)) {
-	case "compatible", "inline":
-		return false
+	case "http", "file":
+		return true
+	case "":
+		return coreKnown && !coreGroup
 	default:
-		return true // Older providers omit vehicleType; keep their existing projection.
+		return false // Missing/unknown vehicle types cannot identify an airport.
 	}
 }
 
@@ -124,6 +126,7 @@ func CollectMihomo(ctx context.Context, fetch func(context.Context, string) ([]b
 	if err != nil {
 		return nil, err
 	}
+	providerBody := body
 	d, _, _, err := parseMihomoProviders(body, now)
 	if err != nil {
 		return nil, err
@@ -152,6 +155,7 @@ func CollectMihomo(ctx context.Context, fetch func(context.Context, string) ([]b
 	// Validate into a copy first, so a malformed supplemental item cannot leave
 	// partially applied statistics presented as a fully available response.
 	extra := &MihomoDetails{Nodes: []MihomoNode{}}
+	coreGroups := map[string]bool{}
 	for _, name := range mihomoSortedKeys(response.Proxies) {
 		p := response.Proxies[name]
 		if p.Name == "" {
@@ -162,10 +166,19 @@ func CollectMihomo(ctx context.Context, fetch func(context.Context, string) ([]b
 			return d, nil
 		}
 		if mihomoNonNode(p) {
+			coreGroups[name] = true
 			continue
 		}
 		addMihomoNode(extra, mihomoProjectNode(p, p.Provider, now))
 	}
+	// Apply the same legacy classification as the workspace only after the
+	// canonical inventory has been fully read and validated.
+	d, _, _, err = parseMihomoProvidersWithCore(providerBody, now, coreGroups, true)
+	if err != nil {
+		return nil, err
+	}
+	d.Nodes = []MihomoNode{}
+	d.NodeCount, d.HealthyNodes, d.UnhealthyNodes, d.UnknownNodes, d.StaleNodes = 0, 0, 0, 0, 0
 	for _, n := range extra.Nodes {
 		if len(d.Nodes) < mihomoDetailLimit {
 			d.Nodes = append(d.Nodes, n)
@@ -176,7 +189,7 @@ func CollectMihomo(ctx context.Context, fetch func(context.Context, string) ([]b
 	d.UnhealthyNodes += extra.UnhealthyNodes
 	d.UnknownNodes += extra.UnknownNodes
 	d.StaleNodes += extra.StaleNodes
-	d.Truncated = d.Truncated || d.NodeCount > mihomoDetailLimit
+	d.Truncated = d.SubscriptionCount > mihomoDetailLimit || d.NodeCount > mihomoDetailLimit
 	d.ProxySourceState = "available"
 	return d, nil
 }
@@ -198,6 +211,10 @@ func mihomoSortedKeys[T any](m map[string]T) []string {
 }
 
 func parseMihomoProviders(body []byte, now time.Time) (*MihomoDetails, map[string]bool, map[string]bool, error) {
+	return parseMihomoProvidersWithCore(body, now, nil, false)
+}
+
+func parseMihomoProvidersWithCore(body []byte, now time.Time, coreGroups map[string]bool, coreKnown bool) (*MihomoDetails, map[string]bool, map[string]bool, error) {
 	if len(body) > mihomoResponseLimit {
 		return nil, nil, nil, mihomoInvalid()
 	}
@@ -214,7 +231,7 @@ func parseMihomoProviders(body []byte, now time.Time) (*MihomoDetails, map[strin
 			return nil, nil, nil, mihomoInvalid()
 		}
 		provider := response.Providers[name]
-		if !mihomoSubscriptionProvider(provider) {
+		if !mihomoSubscriptionProvider(provider, coreKnown, coreGroups[name]) {
 			d.EmbeddedProviderCount++
 			continue
 		}
@@ -244,7 +261,7 @@ func parseMihomoProviders(body []byte, now time.Time) (*MihomoDetails, map[strin
 			addMihomoNode(d, mihomoProjectNode(p, name, now))
 		}
 	}
-	if d.SubscriptionCount == 0 && d.EmbeddedProviderCount > 0 {
+	if d.SubscriptionCount == 0 {
 		d.SubscriptionState = "not_exposed"
 	}
 	d.Truncated = d.SubscriptionCount > mihomoDetailLimit || d.NodeCount > mihomoDetailLimit
@@ -317,12 +334,17 @@ func mihomoNonNode(p mihomoRawProxy) bool {
 func mihomoProjectNode(p mihomoRawProxy, provider string, now time.Time) MihomoNode {
 	n := MihomoNode{Provider: provider, Name: p.Name, Type: p.Type, Alive: p.Alive, State: "unknown", Freshness: "missing"}
 	for _, h := range p.History {
-		if h.Time.IsZero() || h.Delay == nil {
+		if h.Time.IsZero() || len(h.Delay) == 0 || string(h.Delay) == "null" {
 			continue
 		}
 		if n.CheckedAt == nil || h.Time.After(*n.CheckedAt) {
-			t, delay := h.Time, *h.Delay
-			n.CheckedAt, n.DelayMS = &t, &delay
+			t := h.Time
+			n.CheckedAt = &t
+			n.DelayMS = nil
+			var delay uint16
+			if json.Unmarshal(h.Delay, &delay) == nil {
+				n.DelayMS = &delay
+			}
 		}
 	}
 	if n.CheckedAt == nil {
@@ -337,6 +359,10 @@ func mihomoProjectNode(p mihomoRawProxy, provider string, now time.Time) MihomoN
 		return n
 	}
 	n.Freshness = "fresh"
+	if n.DelayMS == nil {
+		n.Freshness = "invalid"
+		return n
+	}
 	if *n.DelayMS == 0 || (n.Alive != nil && !*n.Alive) {
 		n.State = "unhealthy"
 	} else if *n.DelayMS > 0 {

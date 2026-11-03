@@ -32,7 +32,7 @@ export function modelPage(section: ModelsSection) { return modelPages.find(item 
 export function networkPage(section: NetworkSection) { return networkPages.find(item => item.section === section)!; }
 
 // Stable, explicit routes. Only known application paths get the SPA shell.
-const pagePaths: Record<string, string> = {
+export const pagePaths: Record<string, string> = {
  home: '/', services: '/services', alerts: '/alerts', devices: '/devices', settings: '/settings', diagnostic: '/diagnostic',
  logs: '/logs', 'logs-services': '/logs/services', 'logs-models': '/logs/models', 'logs-network': '/logs/network',
  ...Object.fromEntries(modelPages.map(page => [page.key, page.section === 'overview' ? '/models' : '/models/' + page.section])),

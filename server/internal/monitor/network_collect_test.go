@@ -105,7 +105,7 @@ func TestNetworkInventoryCanonicalNodesAcrossFourProviders(t *testing.T) {
 func TestNetworkInventoryUsesCoreEvidenceAndDoesNotBorrowDirectoryHealth(t *testing.T) {
 	now := time.Date(2026, 10, 29, 10, 0, 0, 0, time.UTC)
 	w := newNetworkTestWorker(now)
-	provider := []byte(`{"providers":{"airport":{"proxies":[{"name":"same","type":"AnyTLS","history":[{"time":"2026-10-29T10:00:00Z","delay":5}]},{"name":"not-loaded","type":"AnyTLS"}]}}}`)
+	provider := []byte(`{"providers":{"airport":{"vehicleType":"HTTP","proxies":[{"name":"same","type":"AnyTLS","history":[{"time":"2026-10-29T10:00:00Z","delay":5}]},{"name":"not-loaded","type":"AnyTLS"}]}}}`)
 	core := []byte(`{"proxies":{"same":{"name":"ignored-payload-name","type":"AnyTLS","history":[{"time":"2026-10-29T10:00:00Z","delay":0}]}}}`)
 	w.profileNodes = []NetworkNode{{ID: "profile", Name: "same", Type: "AnyTLS", State: "unknown", Freshness: "missing"}}
 	w.applyInventory(provider, nil, core, nil, "", now)

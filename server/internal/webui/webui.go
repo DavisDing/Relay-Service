@@ -50,9 +50,14 @@ func Handler() http.Handler {
 }
 
 func applicationPath(path string) bool {
-	switch strings.TrimSuffix(path, "/") {
-	case "", "/services", "/alerts", "/devices", "/settings", "/diagnostic", "/models", "/models/models", "/models/channels", "/models/traffic", "/models/status", "/models/probes", "/network", "/network/usage", "/network/subscriptions", "/network/nodes", "/network/connections", "/network/logs", "/logs", "/logs/services", "/logs/models", "/logs/network":
-		return true
+	for _, candidate := range applicationPaths {
+		if strings.TrimSuffix(path, "/") == strings.TrimSuffix(candidate, "/") {
+			return true
+		}
 	}
 	return false
+}
+
+var applicationPaths = []string{
+	"/", "/services", "/alerts", "/devices", "/settings", "/diagnostic", "/models", "/models/models", "/models/channels", "/models/traffic", "/models/status", "/models/probes", "/network", "/network/usage", "/network/subscriptions", "/network/nodes", "/network/connections", "/network/logs", "/logs", "/logs/services", "/logs/models", "/logs/network",
 }

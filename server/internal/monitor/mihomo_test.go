@@ -34,7 +34,7 @@ func TestMihomoSubscriptionAndExistingQuality(t *testing.T) {
 
 func TestMihomoMissingStaleZeroAndFutureEvidence(t *testing.T) {
 	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
-	body := []byte(`{"providers":{"P":{"proxies":[{"name":"default-alive","type":"VMess","alive":true,"history":[]},{"name":"old","type":"VMess","alive":true,"history":[{"time":"2026-10-28T11:00:00Z","delay":10}]},{"name":"zero","type":"VMess","alive":true,"history":[{"time":"2026-10-28T11:59:00Z","delay":0}]},{"name":"failed","type":"VMess","alive":false,"history":[{"time":"2026-10-28T11:59:00Z","delay":0}]},{"name":"future","type":"VMess","alive":true,"history":[{"time":"2026-10-28T12:01:00Z","delay":10}]},{"name":"unordered","type":"VMess","history":[{"time":"2026-10-28T11:59:00Z","delay":10},{"time":"2026-10-28T10:01:00Z","delay":0}]},{"name":"group","type":"Selector","all":["failed"]},{"name":"DIRECT","type":"Direct"}]}}}`)
+	body := []byte(`{"providers":{"P":{"vehicleType":"HTTP","proxies":[{"name":"default-alive","type":"VMess","alive":true,"history":[]},{"name":"old","type":"VMess","alive":true,"history":[{"time":"2026-10-28T11:00:00Z","delay":10}]},{"name":"zero","type":"VMess","alive":true,"history":[{"time":"2026-10-28T11:59:00Z","delay":0}]},{"name":"failed","type":"VMess","alive":false,"history":[{"time":"2026-10-28T11:59:00Z","delay":0}]},{"name":"future","type":"VMess","alive":true,"history":[{"time":"2026-10-28T12:01:00Z","delay":10}]},{"name":"unordered","type":"VMess","history":[{"time":"2026-10-28T11:59:00Z","delay":10},{"time":"2026-10-28T10:01:00Z","delay":0}]},{"name":"group","type":"Selector","all":["failed"]},{"name":"DIRECT","type":"Direct"}]}}}`)
 	d, err := ParseMihomoProviders(body, now)
 	if err != nil {
 		t.Fatal(err)
@@ -66,7 +66,7 @@ func TestMihomoSubscriptionQuotaBoundaries(t *testing.T) {
 		{`{"Total":100}`, "unknown", false}, {`{"Upload":-1}`, "", true},
 		{`{"Upload":9223372036854775807,"Download":1}`, "", true}, {`{"Expire":253402300800}`, "", true},
 	} {
-		d, err := ParseMihomoProviders([]byte(`{"providers":{"P":{"subscriptionInfo":`+tt.info+`}}}`), now)
+		d, err := ParseMihomoProviders([]byte(`{"providers":{"P":{"vehicleType":"HTTP","subscriptionInfo":`+tt.info+`}}}`), now)
 		if tt.invalid {
 			if err == nil {
 				t.Errorf("accepted invalid %s", tt.info)
@@ -135,14 +135,14 @@ func TestMihomoProjectionLimitAndInvalidResponse(t *testing.T) {
 	for i := 0; i < 205; i++ {
 		nodes = append(nodes, fmt.Sprintf(`{"name":"node-%d","type":"VMess"}`, i))
 	}
-	d, err := ParseMihomoProviders([]byte(`{"providers":{"P":{"proxies":[`+strings.Join(nodes, ",")+`]}}}`), time.Now())
+	d, err := ParseMihomoProviders([]byte(`{"providers":{"P":{"vehicleType":"HTTP","proxies":[`+strings.Join(nodes, ",")+`]}}}`), time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if d.NodeCount != 205 || len(d.Nodes) != 200 || !d.Truncated || d.UnknownNodes != 205 {
 		t.Fatal("projection limit/statistics incorrect")
 	}
-	for _, body := range [][]byte{[]byte(`{}`), []byte(`{"providers":null}`), []byte(`{"providers":{"P":{"proxies":[{"name":"bad\nname","type":"VMess"}]}}}`), []byte(strings.Repeat(" ", mihomoResponseLimit+1))} {
+	for _, body := range [][]byte{[]byte(`{}`), []byte(`{"providers":null}`), []byte(`{"providers":{"P":{"vehicleType":"HTTP","proxies":[{"name":"bad\nname","type":"VMess"}]}}}`), []byte(strings.Repeat(" ", mihomoResponseLimit+1))} {
 		if _, err := ParseMihomoProviders(body, time.Now()); err == nil {
 			t.Fatal("accepted invalid response")
 		}
@@ -152,7 +152,7 @@ func TestMihomoProjectionLimitAndInvalidResponse(t *testing.T) {
 func TestMihomoSubscriptionAlertBeyondProjection(t *testing.T) {
 	providers := make(map[string]any)
 	for i := 0; i < 201; i++ {
-		providers[fmt.Sprintf("provider-%03d", i)] = map[string]any{}
+		providers[fmt.Sprintf("provider-%03d", i)] = map[string]any{"vehicleType": "HTTP"}
 	}
 	providers["provider-200"] = map[string]any{"subscriptionInfo": map[string]int64{"Expire": 1}}
 	body, _ := json.Marshal(map[string]any{"providers": providers})

@@ -243,6 +243,10 @@ func (s *Server) routes() {
 		return map[string]any{"revoked": true}, http.StatusOK, nil
 	}})
 	s.handle("GET /api/v1/services", route{fn: func(q request) (any, int, error) {
+		// This contract returns the complete service inventory, not a page.
+		if q.r.URL.RawQuery != "" {
+			return nil, 0, badRequest("invalid_request", "服务列表不支持分页或筛选参数。")
+		}
 		items, err := q.s.monitor.Services(q.r.Context())
 		actor, _ := principal(q.r.Context())
 		if actor.Role == "device" {

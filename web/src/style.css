@@ -1133,3 +1133,11 @@ fieldset {
 
 .monitor-details li { margin: 8px 0; }
 .monitor-details li small { display: block; color: var(--text-secondary); margin-top: 4px; }
+
+/* Proportional geometry comes from SVG attributes, compatible with CSP. */
+svg.status-distribution { display: block; width: 100%; }
+.status-distribution .healthy { fill: var(--success); }
+.status-distribution .failed { fill: var(--danger); }
+.status-distribution .unknown { fill: var(--text-tertiary); }
+.status-distribution .pending { fill: var(--accent); }
+.status-distribution .paused { fill: var(--paused); }
